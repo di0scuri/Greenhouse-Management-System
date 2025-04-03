@@ -1,0 +1,136 @@
+/* src/styles/calendar.css */
+/* Converted from Tailwind @apply rules to standard CSS */
+
+.react-calendar {
+  /* From: @apply border border-gray-300 rounded-lg shadow-sm bg-white p-4; */
+  border: 1px solid #D1D5DB; /* Equivalent to border-gray-300 */
+  border-radius: 0.5rem; /* Equivalent to rounded-lg */
+  box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05); /* Equivalent to shadow-sm */
+  background-color: #ffffff; /* Equivalent to bg-white */
+  padding: 1rem; /* Equivalent to p-4 */
+
+  /* Original standard CSS */
+  width: 100%;
+  max-width: 450px; /* Optional: Set a max-width */
+  line-height: 1.2em;
+}
+
+.react-calendar__navigation button {
+  /* From: @apply text-green-700 font-semibold hover:bg-green-50 rounded-md; */
+  color: #047857; /* Equivalent to text-green-700 */
+  font-weight: 600; /* Equivalent to font-semibold */
+  border-radius: 0.375rem; /* Equivalent to rounded-md */
+  transition: background-color 150ms ease-in-out; /* Added for hover */
+
+  /* Original standard CSS */
+  min-width: 44px;
+}
+
+.react-calendar__navigation button:hover {
+  /* From: hover:bg-green-50 */
+  background-color: #F0FDF4;
+}
+
+.react-calendar__navigation button:disabled {
+  /* From: @apply bg-gray-100 text-gray-400 cursor-not-allowed; */
+  background-color: #F3F4F6; /* Equivalent to bg-gray-100 */
+  color: #9CA3AF; /* Equivalent to text-gray-400 */
+  cursor: not-allowed;
+}
+
+/* Ensure disabled hover state doesn't override disabled styles */
+.react-calendar__navigation button:disabled:hover {
+  background-color: #F3F4F6;
+}
+
+
+.react-calendar__month-view__weekdays__weekday {
+  /* From: @apply font-bold text-sm text-gray-600 uppercase text-center pb-2; */
+  font-weight: 700; /* Equivalent to font-bold */
+  font-size: 0.875rem; /* Equivalent to text-sm */
+  line-height: 1.25rem; /* From text-sm */
+  color: #4B5563; /* Equivalent to text-gray-600 */
+  text-transform: uppercase;
+  text-align: center;
+  padding-bottom: 0.5rem; /* Equivalent to pb-2 */
+}
+
+.react-calendar__tile {
+  /* From: @apply text-center p-2 rounded-md hover:bg-green-100 transition-colors; */
+  text-align: center;
+  padding: 0.5rem; /* Equivalent to p-2 */
+  border-radius: 0.375rem; /* Equivalent to rounded-md */
+  transition-property: color, background-color, border-color, text-decoration-color, fill, stroke;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  transition-duration: 150ms; /* Equivalent to transition-colors */
+
+  /* Original standard CSS */
+  height: 50px; /* Adjust height as needed */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start; /* Align content to top */
+}
+
+.react-calendar__tile:hover {
+   /* From: hover:bg-green-100 */
+   background-color: #D1FAE5;
+}
+
+.react-calendar__tile--now {
+  /* From: @apply bg-green-100 font-bold text-green-800; */
+  background-color: #D1FAE5; /* Equivalent to bg-green-100 */
+  font-weight: 700; /* Equivalent to font-bold */
+  color: #065F46; /* Equivalent to text-green-800 */
+}
+
+/* Ensure hover on 'now' tile doesn't remove bold/text color */
+.react-calendar__tile--now:hover {
+   background-color: #A7F3D0; /* Slightly darker green for hover on 'now' */
+}
+
+
+.react-calendar__tile--active {
+  /* From: @apply bg-green-600 text-white font-bold; */
+  background-color: #059669; /* Equivalent to bg-green-600 */
+  color: #ffffff; /* Equivalent to text-white */
+  font-weight: 700; /* Equivalent to font-bold */
+}
+
+.react-calendar__tile--active:hover {
+  /* From: @apply bg-green-700; */
+  background-color: #047857; /* Equivalent to bg-green-700 */
+}
+
+.react-calendar__tile--hasActive {
+   /* From: @apply bg-green-600 text-white; */
+   background-color: #059669;
+   color: #ffffff;
+   /* Style for range selection if needed - same as active */
+}
+
+/* Style for the event indicator dot */
+.react-calendar__tile.day-with-event abbr {
+   /* From: @apply relative; */
+   position: relative;
+}
+.react-calendar__tile.day-with-event abbr::after {
+    /* From: @apply absolute bottom-0 left-1/2 transform -translate-x-1/2 w-1.5 h-1.5 bg-blue-500 rounded-full; */
+    content: '';
+    position: absolute;
+    bottom: 2px; /* Adjust position slightly */
+    left: 50%;
+    transform: translateX(-50%);
+    width: 0.375rem; /* Equivalent to w-1.5 */
+    height: 0.375rem; /* Equivalent to h-1.5 */
+    background-color: #3B82F6; /* Equivalent to bg-blue-500 */
+    border-radius: 9999px; /* Equivalent to rounded-full */
+}
+
+/* Original standard CSS for other views */
+.react-calendar__year-view .react-calendar__tile,
+.react-calendar__decade-view .react-calendar__tile,
+.react-calendar__century-view .react-calendar__tile {
+  padding: 1.5em 0.5em; /* Adjust padding for year/decade views */
+}
+
