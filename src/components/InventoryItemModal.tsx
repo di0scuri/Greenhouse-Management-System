@@ -1,17 +1,14 @@
-// src/components/InventoryItemModal.tsx
 'use client';
 
 import React, { useState, useEffect } from 'react';
 import { X, Loader2 } from 'lucide-react';
-import { InventoryItem } from '@/app/inventory/page'; // Assuming type is exported from page or moved to types file
-
-// Define props for the modal
+import { InventoryItem } from '@/app/inventory/page'; 
 interface InventoryItemModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSubmit: (itemData: Partial<InventoryItem>, id?: string) => Promise<void>; // Pass ID for updates
-  initialData?: InventoryItem | null; // Pass existing item data for editing
-  activeCategory: 'Seeds' | 'Fertilizers'; // To pre-set category for new items
+  onSubmit: (itemData: Partial<InventoryItem>, id?: string) => Promise<void>;
+  initialData?: InventoryItem | null; 
+  activeCategory: 'Seeds' | 'Fertilizers';
 }
 
 const InventoryItemModal: React.FC<InventoryItemModalProps> = ({
@@ -23,36 +20,35 @@ const InventoryItemModal: React.FC<InventoryItemModalProps> = ({
 }) => {
   // Form state
   const [name, setName] = useState('');
-  const [stock, setStock] = useState<number | string>(''); // Use string for easier input handling
+  const [stock, setStock] = useState<number | string>('');
   const [unit, setUnit] = useState('');
   const [lowStockThreshold, setLowStockThreshold] = useState<number | string>('');
   const [category, setCategory] = useState<'Seeds' | 'Fertilizers'>(activeCategory);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const isEditing = !!initialData; // Determine if we are editing or creating
+  const isEditing = !!initialData; 
 
-  // Pre-fill form when editing or category changes for new item
   useEffect(() => {
     if (isOpen) {
       if (isEditing && initialData) {
         setName(initialData.name);
-        setCategory(initialData.category as 'Seeds' | 'Fertilizers'); // Assume category matches
+        setCategory(initialData.category as 'Seeds' | 'Fertilizers'); 
         setStock(initialData.stock);
         setUnit(initialData.unit);
         setLowStockThreshold(initialData.lowStockThreshold);
       } else {
-        // Reset for 'Create' mode, setting category based on active tab
+
         setName('');
         setCategory(activeCategory);
         setStock('');
-        setUnit(activeCategory === 'Seeds' ? 'Packs' : 'kg'); // Default unit based on category
+        setUnit(activeCategory === 'Seeds' ? 'Packs' : 'kg');
         setLowStockThreshold('');
       }
       setIsSubmitting(false);
       setError(null);
     }
-  }, [isOpen, initialData, isEditing, activeCategory]); // Rerun effect if these change while open
+  }, [isOpen, initialData, isEditing, activeCategory]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -78,17 +74,14 @@ const InventoryItemModal: React.FC<InventoryItemModalProps> = ({
       stock: stockNum,
       unit,
       lowStockThreshold: thresholdNum,
-      // lastUpdated will be set via serverTimestamp in the parent handler
     };
 
     try {
-      // Pass data and ID (if editing) to parent onSubmit handler
       await onSubmit(itemData, initialData?.id);
-      // Parent component will handle closing the modal on success
     } catch (err) {
       console.error("Error submitting inventory item:", err);
       setError(err instanceof Error ? err.message : `Failed to ${isEditing ? 'update' : 'add'} item. Please try again.`);
-      setIsSubmitting(false); // Allow retry on error
+      setIsSubmitting(false);
     }
   };
 
@@ -115,7 +108,7 @@ const InventoryItemModal: React.FC<InventoryItemModalProps> = ({
                    className="w-full px-3 py-2 border border-gray-300 text-gray-700 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent sm:text-sm disabled:bg-gray-100" />
           </div>
 
-          {/* Category (Read-only when editing, set based on tab when creating) */}
+
           <div>
             <label htmlFor="itemCategory" className="block text-sm font-medium text-gray-700 mb-1">Category</label>
             <input id="itemCategory" type="text" value={category} readOnly disabled

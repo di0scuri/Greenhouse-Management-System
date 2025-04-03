@@ -1,91 +1,75 @@
-// src/app/inventory/page.tsx
-
-'use client'; // Needed for state and effects
+'use client';
 
 import React, { useState, useEffect, useMemo } from 'react';
-import Sidebar from '@/components/Sidebar'; // Adjust path if needed
-import InventoryItemModal from '@/components/InventoryItemModal'; // Import the modal
+import Sidebar from '@/components/Sidebar';
+import InventoryItemModal from '@/components/InventoryItemModal';
 import {
   Search, Bell, SlidersHorizontal, CheckCircle2, AlertTriangle, Loader2,
   Leaf, FlaskConical, X, Menu, Calendar as CalendarIcon,
-  Plus, // Icon for FAB
-  Edit2, // Icon for Edit button
-  Inbox, // Icon for empty state
+  Plus,
+  Edit2,
+  Inbox,
 } from 'lucide-react';
 
-// Firebase Imports
 import {
   collection, query, where, getDocs, Timestamp,
-  addDoc, // For creating items
-  doc, // For referencing documents to update
-  updateDoc, // For updating items
-  serverTimestamp // For setting lastUpdated timestamp
+  addDoc,
+  doc,
+  updateDoc,
+  serverTimestamp
 } from 'firebase/firestore';
-import { firestore } from '@/app/lib/firebase/config'; // Adjust path if needed
-
-// Define the structure for an inventory item (can be moved to a types file)
-// Ensure this interface is exported if the Modal component imports it directly from here
+import { firestore } from '@/app/lib/firebase/config';
 export interface InventoryItem {
-  id: string; // Firestore document ID
+  id: string;
   name: string;
-  category: string; // 'Seeds', 'Fertilizers', etc.
+  category: string;
   stock: number;
   unit: string;
   lowStockThreshold: number;
-  lastUpdated?: Date; // Converted from Firestore Timestamp
+  lastUpdated?: Date;
 }
 
-// Ensure this is the default export and it's a valid React component
 export default function InventoryPage() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<'Seeds' | 'Fertilizers'>('Seeds');
   const [searchTerm, setSearchTerm] = useState('');
   const [inventoryData, setInventoryData] = useState<InventoryItem[]>([]);
-  const [isLoading, setIsLoading] = useState<boolean>(true); // Start loading initially
+  const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalMode, setModalMode] = useState<'create' | 'edit'>('create');
   const [editingItem, setEditingItem] = useState<InventoryItem | null>(null);
 
-  // Fetch data from the single 'inventory' collection based on activeTab
   useEffect(() => {
     const fetchInventoryData = async () => {
       setIsLoading(true);
       setError(null);
-      setInventoryData([]); // Clear previous data on tab change/reload
+      setInventoryData([]);
 
       try {
         const inventoryCollectionRef = collection(firestore, 'inventory');
-        // Query using lowercase category to work around potential data inconsistency
         const q = query(inventoryCollectionRef, where("category", "==", activeTab.toLowerCase()));
         const querySnapshot = await getDocs(q);
         const fetchedItems: InventoryItem[] = [];
 
         querySnapshot.forEach((doc) => {
           const data = doc.data();
-          // Handle potential typo ('lowStokThreshold') when reading from Firestore
           const lowStockValue = data.lowStockThreshold ?? data.lowStokThreshold;
           fetchedItems.push({
             id: doc.id,
             name: data.name || 'Unnamed Item',
-            // Use the actual category from Firestore, might be lower/upper case
             category: data.category || 'Unknown',
-            // Convert string from DB to number for interface, default 0
             stock: typeof data.stock === 'number' ? data.stock : Number(data.stock) || 0,
             unit: data.unit || '',
-             // Convert string from DB (potentially with typo) to number for interface, default 0
             lowStockThreshold: typeof lowStockValue === 'number' ? lowStockValue : Number(lowStockValue) || 0,
             lastUpdated: data.lastUpdated instanceof Timestamp ? data.lastUpdated.toDate() : undefined,
           });
         });
-        // Sort data alphabetically by name after fetching
         fetchedItems.sort((a, b) => a.name.localeCompare(b.name));
         setInventoryData(fetchedItems);
       } catch (err: any) {
         console.error("Error fetching inventory data:", err);
-        // Provide more specific error feedback if possible
         if (err.code === 'permission-denied') {
              setError(`Permission denied. Check Firestore rules for the 'inventory' collection.`);
         } else if (err.code === 'unimplemented') {
@@ -99,115 +83,94 @@ export default function InventoryPage() {
       }
     };
     fetchInventoryData();
-  }, [activeTab]); // Refetch when activeTab changes
+  }, [activeTab]); 
 
-  // --- CRUD Handlers ---
-  // Open modal in 'create' mode
   const handleOpenCreateModal = () => {
     setModalMode('create');
     setEditingItem(null);
     setIsModalOpen(true);
   };
 
-  // Open modal in 'edit' mode
   const handleOpenEditModal = (item: InventoryItem) => {
     setModalMode('edit');
-    setEditingItem(item); // Pass the whole item being edited
+    setEditingItem(item);
     setIsModalOpen(true);
   };
 
-  // Handle modal submission (Create or Update)
   const handleModalSubmit = async (itemData: Partial<InventoryItem>, id?: string) => {
-     // Ensure required fields are present and stock/threshold are numbers
      const stockNum = Number(itemData.stock);
      const thresholdNum = Number(itemData.lowStockThreshold);
      if (isNaN(stockNum) || isNaN(thresholdNum) || !itemData.name || !itemData.unit) {
-         throw new Error("Invalid data provided to submit."); // Or handle more gracefully
+         throw new Error("Invalid data provided to submit.");
      }
 
      const dataToSave = {
       name: itemData.name,
-      // category: itemData.category!, // Category is set below based on mode/tab or not updated
-      stock: stockNum, // Save as number
+      stock: stockNum,
       unit: itemData.unit,
-      lowStockThreshold: thresholdNum, // Save as number with correct name
+      lowStockThreshold: thresholdNum,
       lastUpdated: serverTimestamp(),
     };
 
     if (modalMode === 'create') {
-      // Add new item to Firestore
       try {
         const inventoryCollectionRef = collection(firestore, 'inventory');
-        // Save category as lowercase, matching the active tab logic
         const docRef = await addDoc(inventoryCollectionRef, { ...dataToSave, category: activeTab.toLowerCase() });
         console.log("Document written with ID: ", docRef.id);
 
-        // Optimistically add to local state
         const newItem: InventoryItem = {
-          ...dataToSave, // contains name, stock, unit, lowStockThreshold
+          ...dataToSave,
           id: docRef.id,
-          lastUpdated: new Date(), // Approximate timestamp for UI
-          category: activeTab, // Assign based on the tab it was created under
+          lastUpdated: new Date(),
+          category: activeTab,
         };
-         // Add and resort
         setInventoryData(prev => [...prev, newItem].sort((a, b) => a.name.localeCompare(b.name)));
-        setIsModalOpen(false); // Close modal on success
+        setIsModalOpen(false);
 
       } catch (error) {
         console.error("Error adding document: ", error);
-        throw new Error("Failed to add item."); // Re-throw to show error in modal
+        throw new Error("Failed to add item.");
       }
     } else if (modalMode === 'edit' && id) {
-      // Update existing item in Firestore
       try {
         const itemDocRef = doc(firestore, 'inventory', id);
-        // Note: category is typically not updated here
         await updateDoc(itemDocRef, dataToSave);
         console.log("Document updated with ID: ", id);
 
-        // Optimistically update local state and resort
         setInventoryData(prev => prev.map(item =>
           item.id === id ? { ...item, ...dataToSave, lastUpdated: new Date() } : item
         ).sort((a, b) => a.name.localeCompare(b.name)));
-        setIsModalOpen(false); // Close modal on success
+        setIsModalOpen(false);
 
       } catch (error) {
         console.error("Error updating document: ", error);
-        throw new Error("Failed to update item."); // Re-throw to show error in modal
+        throw new Error("Failed to update item.");
       }
     }
   };
-  // --- End CRUD Handlers ---
 
 
-  // Filter data based on search term
   const filteredData = useMemo(() => {
     if (!searchTerm) return inventoryData;
     const lowerCaseSearch = searchTerm.toLowerCase();
     return inventoryData.filter(item => item.name.toLowerCase().includes(lowerCaseSearch));
   }, [inventoryData, searchTerm]);
 
-  // Calculate summary data
   const lowStockItems = useMemo(() => inventoryData.filter(item => item.stock < item.lowStockThreshold).length, [inventoryData]);
   const lastUpdatedDate = "March 5, 2025"; // TODO: Replace with dynamic logic
 
   const totalStock = useMemo(() => inventoryData.reduce((sum, item) => sum + item.stock, 0), [inventoryData]);
   const totalItemCount = useMemo(() => inventoryData.length, [inventoryData]);
 
-  // --- UI Rendering ---
   return (
     <div className="flex h-screen bg-gray-100 font-sans">
-      {/* Sidebar */}
       <div className="hidden lg:block lg:flex-shrink-0"> <Sidebar /> </div>
       {isMobileMenuOpen && (<div className="fixed inset-y-0 left-0 z-40 lg:hidden"> <Sidebar /> </div>)}
       {isMobileMenuOpen && (<div className="fixed inset-0 z-30 bg-black opacity-50 lg:hidden" onClick={() => setIsMobileMenuOpen(false)}></div>)}
 
-      {/* Main Content Area */}
       <div className="flex-1 flex flex-col overflow-hidden relative">
 
-        {/* Header Section */}
         <header className="bg-green-700 text-white pt-4 pb-3 px-4 sm:px-6 lg:px-8 relative z-10">
-           {/* Top row */}
            <div className="flex justify-between items-center mb-4">
               <div className="flex items-center">
                   <button onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)} className="lg:hidden mr-3 p-1 rounded text-green-100 hover:bg-green-600" aria-label="Open sidebar">
@@ -217,25 +180,19 @@ export default function InventoryPage() {
               </div>
               <button className="p-2 rounded-full hover:bg-green-600"> <Bell className="h-6 w-6" /> </button>
            </div>
-           {/* Search and Filter Row */}
            <div className="flex items-center space-x-2 bg-white rounded-lg px-3 py-1 shadow">
               <Search className="h-5 w-5 text-gray-400" />
               <input type="text" placeholder="Search items..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="flex-grow py-1 focus:outline-none text-gray-800 placeholder-gray-500" />
               <button className="p-1 text-gray-500 hover:text-gray-700"> <SlidersHorizontal className="h-5 w-5" /> </button>
            </div>
-           {/* Tabs */}
            <div className="mt-6 flex border-b border-green-600">
               <button onClick={() => { setActiveTab('Seeds'); setSearchTerm(''); }} className={`py-2 px-4 text-sm font-medium ${activeTab === 'Seeds' ? 'border-b-2 border-white text-white' : 'text-green-100 hover:text-white'}`}> Seeds </button>
               <button onClick={() => { setActiveTab('Fertilizers'); setSearchTerm(''); }} className={`py-2 px-4 text-sm font-medium ${activeTab === 'Fertilizers' ? 'border-b-2 border-white text-white' : 'text-green-100 hover:text-white'}`}> Fertilizers </button>
            </div>
         </header>
+        <main className="flex-1 overflow-y-auto p-6 lg:p-16 -mt-20">
 
-        {/* Main Content Body */}
-        <main className="flex-1 overflow-y-auto p-6 lg:p-16 -mt-20"> {/* Adjusted margin */}
-
-          {/* Summary Cards */}
-          <section className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6 mt-8"> {/* Added margin */}
-            {/* Card 1: Total Items */}
+          <section className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6 mt-8">
             <div className="bg-white p-4 rounded-lg shadow flex items-center space-x-3">
               {activeTab === 'Seeds' ? <Leaf className="h-8 w-8 text-green-500" /> : <FlaskConical className="h-8 w-8 text-blue-500" />}
               <div>
@@ -243,7 +200,6 @@ export default function InventoryPage() {
                 <p className="text-xl font-semibold text-gray-800"> {isLoading ? '-' : error ? 'N/A' : `${totalItemCount} Items`} </p>
               </div>
             </div>
-             {/* Card 2: Low Stock Count */}
             <div className={`bg-white p-4 rounded-lg shadow flex items-center space-x-3 ${!isLoading && !error && lowStockItems > 0 ? 'border-l-4 border-red-500' : ''}`}>
                <AlertTriangle className={`h-8 w-8 ${!isLoading && !error && lowStockItems > 0 ? 'text-red-500' : 'text-yellow-500'}`} />
                <div>
@@ -251,7 +207,6 @@ export default function InventoryPage() {
                  <p className={`text-xl font-semibold ${!isLoading && !error && lowStockItems > 0 ? 'text-red-600' : 'text-gray-800'}`}> {isLoading ? '-' : error ? 'N/A' : `${lowStockItems} Items ${lowStockItems > 0 ? '!' : ''}`} </p>
                </div>
             </div>
-             {/* Card 3: Last Updated */}
             <div className="bg-white p-4 rounded-lg shadow flex items-center space-x-3">
                <CalendarIcon className="h-8 w-8 text-gray-500" />
                <div>
@@ -260,8 +215,6 @@ export default function InventoryPage() {
                </div>
             </div>
           </section>
-
-          {/* Inventory Table with Improved States */}
           <section className="bg-white rounded-lg shadow overflow-hidden">
             <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-gray-200">
@@ -273,7 +226,6 @@ export default function InventoryPage() {
                     <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
                   </tr>
                 </thead>
-                {/* Table Body */}
                 <tbody className="bg-white divide-y divide-gray-200">
                   {isLoading ? (
                     <tr><td colSpan={4}><div className="flex justify-center items-center text-gray-500 py-10 px-6"><Loader2 className="h-6 w-6 animate-spin mr-3" /><span>Loading {activeTab.toLowerCase()}...</span></div></td></tr>
@@ -309,14 +261,12 @@ export default function InventoryPage() {
 
         </main>
 
-         {/* Floating Action Button (FAB) */}
          <button onClick={handleOpenCreateModal} className="fixed bottom-8 right-8 z-20 bg-green-600 text-white p-4 rounded-full shadow-lg hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 transition" aria-label="Add new inventory item">
            <Plus size={24} />
          </button>
 
       </div>
 
-      {/* Render the Inventory Item Modal */}
       {isModalOpen && (
          <InventoryItemModal
             isOpen={isModalOpen}

@@ -7,10 +7,9 @@ import FullCalendar from '@fullcalendar/react';
 import dayGridPlugin from '@fullcalendar/daygrid';
 import timeGridPlugin from '@fullcalendar/timegrid';
 import interactionPlugin, { DateClickArg } from '@fullcalendar/interaction';
-// Import EventContentArg for the render prop type
 import { EventClickArg, EventContentArg } from '@fullcalendar/core';
 import { collection, getDocs, query, orderBy, Timestamp, addDoc, serverTimestamp } from 'firebase/firestore';
-import { firestore, auth } from '@/app/lib/firebase/config'; // Make sure this path is correct
+import { firestore, auth } from '@/app/lib/firebase/config';
 import { useAuthState } from 'react-firebase-hooks/auth';
 import Sidebar from '@/components/Sidebar';
 import AddEventModal, { NewEventData } from '@/components/AddEventModal';
@@ -24,7 +23,6 @@ import {
   Search as SearchIcon,
 } from 'lucide-react';
 
-// Interfaces
 interface EventData {
   id: string;
   timestamp: Date;
@@ -90,10 +88,10 @@ export default function CalendarPage() {
         querySnapshot.forEach((doc) => {
           const data = doc.data();
           const timestamp = data.timestamp instanceof Timestamp ? data.timestamp.toDate() : new Date();
-          let eventColor = '#3B82F6'; // Default blue
-          if (data.type === 'SCHEDULED_TASK') { eventColor = data.status === 'completed' ? '#84cc16' : '#facc15'; } // lime / yellow
-          else if (data.type?.startsWith('ALERT')) { eventColor = '#ef4444'; } // red
-          else if (data.type?.startsWith('LOG')) { eventColor = '#6b7280'; } // gray
+          let eventColor = '#3B82F6';
+          if (data.type === 'SCHEDULED_TASK') { eventColor = data.status === 'completed' ? '#84cc16' : '#facc15'; }
+          else if (data.type?.startsWith('ALERT')) { eventColor = '#ef4444'; }
+          else if (data.type?.startsWith('LOG')) { eventColor = '#6b7280'; }
 
           formattedEvents.push({
             id: doc.id,

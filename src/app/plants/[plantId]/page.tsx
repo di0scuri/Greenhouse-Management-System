@@ -1,36 +1,27 @@
-// src/app/plants/[plantId]/page.tsx
-
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { useParams, useRouter } from 'next/navigation'; // Import useParams
+import { useParams, useRouter } from 'next/navigation';
 
-// Firebase Imports
 import { doc, getDoc, collection, query, where, orderBy, getDocs, Timestamp } from 'firebase/firestore';
 import { ref, get} from "firebase/database";
 import { firestore, auth, database } from '@/app/lib/firebase/config';
 import { useAuthState } from 'react-firebase-hooks/auth';
 
-// Import Components & Icons
 import Sidebar from '@/components/Sidebar';
 import LoadingSpinner from '@/components/LoadingSpinner';
 import { Loader2, AlertTriangle, Leaf, ImageOff, Thermometer, Droplets, Sun, ListChecks } from 'lucide-react';
-// Consider adding a simple chart component for NPK history later
-// import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
-
-// Define interfaces matching Firestore structure
 interface PlantDetails {
   id: string;
   name: string;
   type: string;
-  imageUrl?: string | null; // RTDB path
+  imageUrl?: string | null;
   datePlanted: Date;
   status: string;
   locationZone?: string;
   ownerUid: string;
   seedId?: string;
   initialSeedQuantity?: number;
-  // Add other fields from your 'plants' collection
 }
 
 interface NpkReading {
@@ -42,13 +33,11 @@ interface NpkReading {
 }
 
 export default function PlantDetailPage() {
-  // --- Auth State & Routing ---
   const [user, loadingAuth, errorAuth] = useAuthState(auth);
   const router = useRouter();
-  const params = useParams(); // Get dynamic route parameters
-  const plantId = typeof params?.plantId === 'string' ? params.plantId : null; // Extract plantId
+  const params = useParams();
+  const plantId = typeof params?.plantId === 'string' ? params.plantId : null;
 
-  // --- Component State ---
   const [plantDetails, setPlantDetails] = useState<PlantDetails | null>(null);
   const [npkHistory, setNpkHistory] = useState<NpkReading[]>([]);
   const [imageData, setImageData] = useState<string | null>(null);
@@ -56,7 +45,6 @@ export default function PlantDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [isImageLoading, setIsImageLoading] = useState<boolean>(false);
 
-  // --- Auth Protection Effect ---
   useEffect(() => {
     if (!loadingAuth) {
       if (!user) { router.push('/login'); }
@@ -64,18 +52,15 @@ export default function PlantDetailPage() {
     }
   }, [user, loadingAuth, errorAuth, router]);
 
-  // --- Data Fetching Effect ---
   useEffect(() => {
-    // Ensure we have user, firestore, database, and plantId before fetching
     if (!loadingAuth && user && firestore && database && plantId) {
       const fetchAllData = async () => {
         setIsLoading(true);
         setError(null);
-        setImageData(null); // Reset image data on new plant load
-        setNpkHistory([]); // Reset NPK history
+        setImageData(null);
+        setNpkHistory([]);
 
         try {
-          // --- Fetch Plant Details ---
           const plantDocRef = doc(firestore, 'plants', plantId);
           const plantDocSnap = await getDoc(plantDocRef);
 
@@ -84,7 +69,6 @@ export default function PlantDetailPage() {
           }
 
           const data = plantDocSnap.data();
-          // Basic check if user owns this plant (optional, depends on rules)
           if (data.ownerUid !== user.uid) {
              throw new Error("You do not have permission to view this plant.");
           }
@@ -103,11 +87,8 @@ export default function PlantDetailPage() {
           };
           setPlantDetails(fetchedPlantDetails);
 
-          // --- Fetch NPK History ---
-          // Assuming 'npkReadings' is a top-level collection
-          // If it's a subcollection: collection(firestore, 'plants', plantId, 'npkReadings')
           const npkCollectionRef = collection(firestore, 'npkReadings');
-          const qNpk = query(npkCollectionRef, where("plantId", "==", plantId), orderBy("timestamp", "desc")); // Newest first
+          const qNpk = query(npkCollectionRef, where("plantId", "==", plantId), orderBy("timestamp", "desc"));
           const npkSnapshot = await getDocs(qNpk);
           const fetchedNpkHistory: NpkReading[] = [];
           npkSnapshot.forEach((doc) => {
@@ -122,7 +103,6 @@ export default function PlantDetailPage() {
           });
           setNpkHistory(fetchedNpkHistory);
 
-          // --- Fetch Image from RTDB (if path exists) ---
           if (fetchedPlantDetails.imageUrl && fetchedPlantDetails.imageUrl.startsWith('plantImages/')) {
             setIsImageLoading(true);
             const imageRefRTDB = ref(database, fetchedPlantDetails.imageUrl);
@@ -147,24 +127,22 @@ export default function PlantDetailPage() {
       };
       fetchAllData();
     } else if (!loadingAuth && !user) {
-        // Handled by auth redirect effect
     } else if (!plantId) {
-        setError("Plant ID not found in URL."); // Handle case where ID is missing
+        setError("Plant ID not found in URL.");
         setIsLoading(false);
     } else if (!firestore || !database) {
         setError("Database services not available.");
         setIsLoading(false);
     }
 
-  }, [plantId, user, loadingAuth]); // Rerun if plantId or user changes
+  }, [plantId, user, loadingAuth]);
 
-  // --- Render Loading/Error/Auth States ---
-  if (loadingAuth || (isLoading && !error)) { // Show main loader if auth loading OR data loading (and no error yet)
+  if (loadingAuth || (isLoading && !error)) {
     return <LoadingSpinner message={loadingAuth ? "Authenticating..." : "Loading Plant Data..."} />;
   }
-  if (!user) { return null; } // Auth redirecting
+  if (!user) { return null; }
   if (error) {
-    return ( // Basic error display page
+    return (
         <div className="flex h-screen">
             <Sidebar />
             <main className="flex-1 p-8 flex items-center justify-center text-center">
@@ -178,18 +156,16 @@ export default function PlantDetailPage() {
         </div>
     );
   }
-   if (!plantDetails) { // Should be covered by isLoading, but as a fallback
+   if (!plantDetails) {
      return <LoadingSpinner message="Fetching plant details..." />;
    }
 
-  // --- Render Plant Detail Content ---
   const latestNpk = npkHistory.length > 0 ? npkHistory[0] : null;
 
   return (
     <div className="flex h-screen bg-gray-100 font-sans">
       <Sidebar />
       <div className="flex-1 flex flex-col overflow-hidden">
-        {/* Simple Header */}
         <header className="bg-white shadow-sm relative z-10 border-b">
           <div className="max-w-full mx-auto px-4 sm:px-6 lg:px-8">
             <div className="flex justify-between items-center h-16">
@@ -197,17 +173,13 @@ export default function PlantDetailPage() {
                 <Leaf className="h-6 w-6 mr-2 text-green-600" />
                 Plant Details: {plantDetails.name}
               </h1>
-              {/* Add Edit/Delete buttons here later */}
             </div>
           </div>
         </header>
 
-        {/* Main Content */}
         <main className="flex-1 overflow-y-auto p-6 lg:p-8">
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-            {/* Left Column: Image & Basic Info */}
             <div className="lg:col-span-1 space-y-6">
-              {/* Image Card */}
               <div className="bg-white rounded-lg shadow p-4">
                 <h2 className="text-lg font-semibold text-gray-700 mb-3">Image</h2>
                 <div className="w-full aspect-square relative bg-gray-200 rounded flex items-center justify-center text-gray-400">
@@ -220,7 +192,6 @@ export default function PlantDetailPage() {
                   )}
                 </div>
               </div>
-              {/* Basic Details Card */}
               <div className="bg-white rounded-lg shadow p-4">
                  <h2 className="text-lg font-semibold text-gray-700 mb-3">Details</h2>
                  <dl className="space-y-2 text-sm">
@@ -235,9 +206,7 @@ export default function PlantDetailPage() {
               </div>
             </div>
 
-            {/* Right Column: NPK Readings & Other Data */}
             <div className="lg:col-span-2 space-y-6">
-               {/* Latest NPK Card */}
                <div className="bg-white rounded-lg shadow p-4">
                   <h2 className="text-lg font-semibold text-gray-700 mb-3">Latest NPK Reading</h2>
                   {latestNpk ? (
@@ -254,11 +223,10 @@ export default function PlantDetailPage() {
                   )}
                </div>
 
-               {/* NPK History Table Card */}
                <div className="bg-white rounded-lg shadow">
                    <h2 className="text-lg font-semibold text-gray-700 p-4 border-b">NPK History</h2>
                    {npkHistory.length > 0 ? (
-                       <div className="overflow-x-auto max-h-96 overflow-y-auto"> {/* Scrollable history */}
+                       <div className="overflow-x-auto max-h-96 overflow-y-auto">
                            <table className="min-w-full divide-y divide-gray-200">
                                <thead className="bg-gray-50 sticky top-0">
                                    <tr>
@@ -284,7 +252,6 @@ export default function PlantDetailPage() {
                        <p className="text-sm text-gray-500 p-4">No historical NPK readings found.</p>
                    )}
                </div>
-               {/* Add other sections like Events specific to this plant, Controls, etc. */}
             </div>
           </div>
         </main>

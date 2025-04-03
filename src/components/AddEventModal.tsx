@@ -1,57 +1,42 @@
-// src/components/AddEventModal.tsx
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { Loader2, X } from 'lucide-react'; // Added Loader2 import
+import { Loader2, X } from 'lucide-react'; 
 
 interface AddEventModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSubmit: (eventData: NewEventData) => Promise<void>; // Make onSubmit async
-  initialDate?: Date | null; // Optional date pre-fill
+  onSubmit: (eventData: NewEventData) => Promise<void>;
+  initialDate?: Date | null;
 }
 
-// Data structure for the new event form
+
 export interface NewEventData {
   message: string;
-  type: string; // e.g., 'SCHEDULED_TASK', 'LOG', 'OBSERVATION'
-  // Use string for date/time input, convert before saving
+  type: string;
   dateTime: string;
-  plantId?: string; // Optional
-  // Add other relevant fields if needed
+  plantId?: string;
 }
 
 const AddEventModal: React.FC<AddEventModalProps> = ({ isOpen, onClose, onSubmit, initialDate }) => {
   const [message, setMessage] = useState('');
-  const [type, setType] = useState('SCHEDULED_TASK'); // Default type
-  // Pre-fill date/time if initialDate is provided, otherwise default
+  const [type, setType] = useState('SCHEDULED_TASK'); 
   const formatDateTimeLocal = (date: Date | null | undefined): string => {
     if (!date) return '';
-    // Formats to 'YYYY-MM-DDTHH:mm' needed by datetime-local input
-    // Adjust for local timezone offset before formatting
     const adjustedDate = new Date(date.getTime() - (date.getTimezoneOffset() * 60000));
-    return adjustedDate.toISOString().slice(0, 16); // Use ISO string up to minutes
+    return adjustedDate.toISOString().slice(0, 16);
 
-    // --- Alternative formatting (might be needed depending on browser/locale) ---
-    // const year = date.getFullYear();
-    // const month = (date.getMonth() + 1).toString().padStart(2, '0');
-    // const day = date.getDate().toString().padStart(2, '0');
-    // const hours = date.getHours().toString().padStart(2, '0');
-    // const minutes = date.getMinutes().toString().padStart(2, '0');
-    // return `${year}-${month}-${day}T${hours}:${minutes}`;
   };
   const [dateTime, setDateTime] = useState<string>(formatDateTimeLocal(initialDate) || '');
   const [plantId, setPlantId] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Reset form when modal opens or initialDate changes
-  // Also default dateTime to current time if initialDate is null/undefined when opening
   useEffect(() => {
     if (isOpen) {
       setMessage('');
       setType('SCHEDULED_TASK');
-      setDateTime(formatDateTimeLocal(initialDate) || formatDateTimeLocal(new Date())); // Default to now if no initialDate
+      setDateTime(formatDateTimeLocal(initialDate) || formatDateTimeLocal(new Date())); 
       setPlantId('');
       setIsSubmitting(false);
       setError(null);
@@ -71,27 +56,21 @@ const AddEventModal: React.FC<AddEventModalProps> = ({ isOpen, onClose, onSubmit
       await onSubmit({
         message,
         type,
-        dateTime, // Pass as string, conversion happens in parent
-        plantId: plantId || undefined, // Pass undefined if empty
+        dateTime,
+        plantId: plantId || undefined, 
       });
-      // If onSubmit is successful, the parent should close the modal, which resets state via useEffect
     } catch (err) {
       console.error("Error submitting event:", err);
       setError(err instanceof Error ? err.message : "Failed to add event. Please try again.");
-      setIsSubmitting(false); // Only set submitting false on error
+      setIsSubmitting(false);
     }
-    // On success, isSubmitting remains true until the modal is closed by the parent,
-    // preventing double submission and relying on useEffect to reset state.
   };
 
   if (!isOpen) return null;
 
   return (
-    // Modal backdrop
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-60 p-4 transition-opacity duration-300 ease-in-out">
-      {/* Modal Panel */}
       <div className="bg-white rounded-lg shadow-xl w-full max-w-md transform transition-all duration-300 ease-in-out scale-100">
-        {/* Modal Header */}
         <div className="flex justify-between items-center p-4 border-b border-gray-200">
           <h2 className="text-xl font-semibold text-gray-800">Add New Event/Task</h2>
           <button
@@ -103,16 +82,13 @@ const AddEventModal: React.FC<AddEventModalProps> = ({ isOpen, onClose, onSubmit
             <X size={24} />
           </button>
         </div>
-        {/* Modal Body */}
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
-          {/* Error Display */}
           {error && (
              <div className="text-sm text-red-700 bg-red-100 p-3 rounded-md border border-red-200">
                 {error}
              </div>
            )}
 
-          {/* Message/Title */}
           <div>
             <label htmlFor="message" className="block text-sm font-medium text-gray-700 mb-1">
               Message / Task Description <span className="text-red-500">*</span>
@@ -129,14 +105,13 @@ const AddEventModal: React.FC<AddEventModalProps> = ({ isOpen, onClose, onSubmit
             />
           </div>
 
-          {/* Date and Time */}
           <div>
             <label htmlFor="dateTime" className="block text-sm font-medium text-gray-700 mb-1">
               Date & Time <span className="text-red-500">*</span>
             </label>
             <input
               id="dateTime"
-              type="datetime-local" // Use browser's date-time picker
+              type="datetime-local"
               value={dateTime}
               onChange={(e) => setDateTime(e.target.value)}
               required
@@ -145,7 +120,6 @@ const AddEventModal: React.FC<AddEventModalProps> = ({ isOpen, onClose, onSubmit
             />
           </div>
 
-           {/* Event Type */}
            <div>
             <label htmlFor="type" className="block text-sm font-medium text-gray-700 mb-1">
               Type <span className="text-red-500">*</span>
@@ -162,11 +136,9 @@ const AddEventModal: React.FC<AddEventModalProps> = ({ isOpen, onClose, onSubmit
               <option value="OBSERVATION">Observation</option>
               <option value="LOG">Log</option>
               <option value="ALERT">Alert</option>
-              {/* Add other relevant types */}
             </select>
           </div>
 
-          {/* Plant ID (Optional) */}
           <div>
             <label htmlFor="plantId" className="block text-sm font-medium text-gray-700 mb-1">
               Associated Plant ID (Optional)

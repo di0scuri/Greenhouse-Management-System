@@ -1,5 +1,5 @@
-// src/components/NpkChart.tsx
-'use client'; // Recharts often requires client-side rendering
+
+'use client'; 
 
 import React from 'react';
 import {
@@ -13,7 +13,7 @@ import {
   ResponsiveContainer,
 } from 'recharts';
 
-// Define the structure of the data expected by the chart
+
 export interface NpkDataPoint {
   name: string; // Plant name or identifier
   n: number;    // Nitrogen level (e.g., percentage)
@@ -22,7 +22,7 @@ export interface NpkDataPoint {
 }
 
 interface NpkChartProps {
-  data: NpkDataPoint[]; // Array of data points
+  data: NpkDataPoint[]; 
 }
 
 const NpkChart: React.FC<NpkChartProps> = ({ data }) => {
@@ -31,35 +31,35 @@ const NpkChart: React.FC<NpkChartProps> = ({ data }) => {
   }
 
   return (
-    // Responsive container ensures the chart adjusts to its parent container size
+
     <ResponsiveContainer width="100%" height={300}>
       <BarChart
         data={data}
         margin={{
           top: 20,
           right: 30,
-          left: 0, // Adjusted left margin
+          left: 0, 
           bottom: 5,
         }}
       >
-        {/* Grid lines for better readability */}
+
         <CartesianGrid strokeDasharray="3 3" vertical={false} />
-        {/* X-axis representing plant names */}
+
         <XAxis dataKey="name" tick={{ fontSize: 12 }} />
-        {/* Y-axis representing NPK levels (assuming percentage) */}
+
         <YAxis unit="%" domain={[0, 100]} tick={{ fontSize: 12 }} />
-        {/* Tooltip shows values on hover */}
+
         <Tooltip
           contentStyle={{ backgroundColor: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: '0.375rem' }}
           labelStyle={{ fontWeight: 'bold', color: '#1f2937' }}
         />
-        {/* Legend to identify the bars */}
+
         <Legend wrapperStyle={{ fontSize: '12px', paddingTop: '10px' }} />
-        {/* Bar for Nitrogen */}
+
         <Bar dataKey="n" name="Nitrogen" fill="#4ade80" radius={[4, 4, 0, 0]} /> {/* Green */}
-        {/* Bar for Phosphorus */}
+
         <Bar dataKey="p" name="Phosphorus" fill="#a7f3d0" radius={[4, 4, 0, 0]} /> {/* Lighter Green */}
-        {/* Bar for Potassium */}
+
         <Bar dataKey="k" name="Potassium" fill="#facc15" radius={[4, 4, 0, 0]} /> {/* Yellow */}
       </BarChart>
     </ResponsiveContainer>

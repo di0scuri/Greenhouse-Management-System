@@ -1,6 +1,4 @@
-// src/app/login/page.tsx
-
-'use client'; // Required for hooks like useState, useRouter
+'use client';
 
 import React, { useState } from 'react';
 import { useRouter } from 'next/navigation'; 
@@ -9,7 +7,6 @@ import { Eye, EyeOff } from 'lucide-react';
 import { auth } from '@/app/lib/firebase/config'; 
 
 
-// Firebase Imports
 import {
   AuthError, 
   signInWithEmailAndPassword,
@@ -17,7 +14,6 @@ import {
   GoogleAuthProvider, 
 } from 'firebase/auth';
 
-// --- Reusable Logo Components  ---
 const LeafLogo = () => (
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-8 h-8 text-white">
     <path fillRule="evenodd" d="M15.75 2.25a.75.75 0 0 1 .75.75v4.5a.75.75 0 0 1-1.5 0V6.31L8.024 12.857a5.25 5.25 0 0 0-7.11 6.99C1.5 20.25 2.5 21 3.75 21h12.497c1.25 0 2.25-.75 2.841-1.853a5.25 5.25 0 0 0-7.11-6.99L8.405 5.69V7.5a.75.75 0 0 1-1.5 0v-4.5a.75.75 0 0 1 .75-.75h8.096Z" clipRule="evenodd" />
@@ -33,8 +29,6 @@ const GoogleLogo = () => (
   </svg>
 );
 
-
-
 export default function LoginPage() {
 
   const [email, setEmail] = useState('');
@@ -43,28 +37,24 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
 
   const [isLoading, setIsLoading] = useState(false);
-  const [isGoogleLoading, setIsGoogleLoading] = useState(false); // Separate loading for Google
+  const [isGoogleLoading, setIsGoogleLoading] = useState(false);
 
   const [error, setError] = useState<string | null>(null);
 
 
   const router = useRouter();
-
-  // --- Firebase Email/Password Login Handler ---
   const handleEmailPasswordLogin = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setIsLoading(true);
     setError(null);
 
     try {
-      // Attempt to sign in with Firebase Auth
       const userCredential = await signInWithEmailAndPassword(auth, email, password);
       console.log('Login successful:', userCredential.user);
       
       router.push('/dashboard');
 
     } catch (err) {
-      // Handle Firebase Auth errors
       let errorMessage = 'An unknown error occurred.';
       if (err instanceof Error && 'code' in err) { 
         const authError = err as AuthError;
@@ -92,8 +82,6 @@ export default function LoginPage() {
       setIsLoading(false);
     }
   };
-
-  // --- Firebase Google Sign-in Handler ---
   const handleGoogleLogin = async () => {
     setIsGoogleLoading(true);
     setError(null);
@@ -136,23 +124,16 @@ export default function LoginPage() {
 
 
   return (
-    // Main container
     <div className="min-h-screen flex items-center justify-center bg-gray-100 p-4 font-sans">
-      {/* Login Card */}
       <div className="relative bg-white rounded-xl shadow-lg p-8 pt-16 w-full max-w-md">
-        {/* Logo */}
         <div className="absolute -top-10 left-1/2 transform -translate-x-1/2 bg-green-600 rounded-full p-4 border-4 border-white shadow-md">
           <LeafLogo />
         </div>
 
-        {/* Title */}
         <h1 className="text-3xl font-bold text-center mb-8 text-green-800">
           LOGIN
         </h1>
-
-        {/* Email/Password Form */}
         <form onSubmit={handleEmailPasswordLogin} className="space-y-6">
-          {/* Email Input */}
           <div>
             <label htmlFor="email" className="sr-only">Email</label>
             <input
@@ -163,7 +144,6 @@ export default function LoginPage() {
             />
           </div>
 
-          {/* Password Input */}
           <div className="relative">
             <label htmlFor="password" className="sr-only">Password</label>
             <input
@@ -181,7 +161,6 @@ export default function LoginPage() {
             </button>
           </div>
 
-          {/* Forgot Password Link */}
           <div className="text-right">
             <Link href="/forgot-password" 
                 className="text-sm text-green-700 hover:text-green-800 hover:underline">
@@ -189,14 +168,12 @@ export default function LoginPage() {
             </Link>
           </div>
 
-          {/* Error Message Display */}
           {error && (
             <div className="text-red-600 text-sm text-center p-2 bg-red-100 rounded-md">
               {error}
             </div>
           )}
 
-          {/* Login Button */}
           <div>
             <button
               type="submit" disabled={isLoading || isGoogleLoading}
@@ -206,7 +183,6 @@ export default function LoginPage() {
             </button>
           </div>
 
-          {/* Sign Up Link */}
           <p className="text-center text-sm text-gray-600">
             Don&apos;t have an account?{' '}
             <Link href="/signup" 
@@ -215,15 +191,12 @@ export default function LoginPage() {
             </Link>
           </p>
 
-          {/* Divider */}
           <div className="relative my-6">
             <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-gray-300"></div></div>
             <div className="relative flex justify-center text-sm"><span className="px-2 bg-white text-gray-500">Or continue with</span></div>
           </div>
 
-          {/* Social Login Buttons */}
           <div className="space-y-4">
-             {/* Google Login Button */}
             <button
               type="button" onClick={handleGoogleLogin} disabled={isLoading || isGoogleLoading}
               className={`w-full inline-flex justify-center items-center py-3 px-4 border border-gray-300 rounded-lg shadow-sm bg-white text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 transition duration-200 ${(isLoading || isGoogleLoading) ? 'opacity-50 cursor-not-allowed' : ''}`}

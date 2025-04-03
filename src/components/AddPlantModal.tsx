@@ -1,20 +1,16 @@
-// src/components/AddPlantModal.tsx
 'use client';
 
 import React, { useState, useEffect, ChangeEvent } from 'react';
 import { X, Loader2, AlertTriangle, Image as ImageIcon } from 'lucide-react';
 import { collection, query, where, getDocs, Timestamp } from 'firebase/firestore';
-import { firestore } from '@/app/lib/firebase/config'; // Adjust path
+import { firestore } from '@/app/lib/firebase/config';
 
-// Simplified Inventory Item structure for seed selection
 interface SeedInventoryItem {
   id: string;
   name: string;
   stock: number;
 }
 
-// Data structure for the new plant form
-// PlantType is still included, but will be set automatically
 export interface NewPlantData {
   plantName: string;
   plantType: string;
@@ -32,12 +28,9 @@ interface AddPlantModalProps {
 const MAX_IMAGE_SIZE_MB = 2;
 const MAX_IMAGE_SIZE_BYTES = MAX_IMAGE_SIZE_MB * 1024 * 1024;
 
-// Helper function to attempt extracting plant type from seed name
 const derivePlantTypeFromSeed = (seedName: string): string => {
     if (!seedName) return '';
-    // Remove common suffixes like " Seeds", " Seed" (case-insensitive)
     let derivedType = seedName.replace(/ seeds$/i, '').replace(/ seed$/i, '');
-    // Capitalize first letter (optional, for consistency)
     derivedType = derivedType.charAt(0).toUpperCase() + derivedType.slice(1);
     return derivedType;
 };
@@ -45,23 +38,20 @@ const derivePlantTypeFromSeed = (seedName: string): string => {
 const AddPlantModal: React.FC<AddPlantModalProps> = ({ isOpen, onClose, onSubmit }) => {
   // Form state
   const [plantName, setPlantName] = useState('');
-  const [plantType, setPlantType] = useState(''); // Will be set based on seed selection
+  const [plantType, setPlantType] = useState('');
   const [selectedSeedId, setSelectedSeedId] = useState('');
   const [quantity, setQuantity] = useState<number | string>(1);
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imageBase64, setImageBase64] = useState<string | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
 
-  // State for fetching seeds
   const [availableSeeds, setAvailableSeeds] = useState<SeedInventoryItem[]>([]);
   const [isLoadingSeeds, setIsLoadingSeeds] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
 
-  // State for submission process
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
-  // Fetch available seeds when the modal opens
   useEffect(() => {
     if (!isOpen) return;
 
@@ -102,11 +92,11 @@ const AddPlantModal: React.FC<AddPlantModalProps> = ({ isOpen, onClose, onSubmit
     fetchSeeds();
   }, [isOpen]);
 
-  // Reset form when modal closes
+
   useEffect(() => {
     if (!isOpen) {
       setPlantName('');
-      setPlantType(''); // Reset derived plant type
+      setPlantType(''); 
       setSelectedSeedId('');
       setQuantity(1);
       setImageFile(null);
@@ -117,24 +107,21 @@ const AddPlantModal: React.FC<AddPlantModalProps> = ({ isOpen, onClose, onSubmit
     }
   }, [isOpen]);
 
-  // Handle Seed Selection Change - **UPDATED**
   const handleSeedChange = (event: ChangeEvent<HTMLSelectElement>) => {
       const seedId = event.target.value;
       setSelectedSeedId(seedId);
 
-      // Find the selected seed object to get its name
       const selectedSeed = availableSeeds.find(seed => seed.id === seedId);
       if (selectedSeed) {
-          // Derive plant type from the seed name and update state
           const derivedType = derivePlantTypeFromSeed(selectedSeed.name);
           setPlantType(derivedType);
-          console.log(`Selected seed: ${selectedSeed.name}, Derived type: ${derivedType}`); // For debugging
+          console.log(`Selected seed: ${selectedSeed.name}, Derived type: ${derivedType}`); 
       } else {
-          setPlantType(''); // Reset if selection is cleared or invalid
+          setPlantType('');
       }
   };
 
-  // Handle image file selection (no change needed here)
+
   const handleImageChange = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     setSubmitError(null); setImageFile(null); setImageBase64(null); setImagePreview(null);
@@ -157,7 +144,7 @@ const AddPlantModal: React.FC<AddPlantModalProps> = ({ isOpen, onClose, onSubmit
 
     const quantityNum = Number(quantity);
 
-    // Validation (Plant Type is now derived, so check if it was set)
+
     if (!plantName || !plantType || !selectedSeedId) {
       setSubmitError('Please fill in Plant Name and select a Seed type.');
       return;
@@ -174,19 +161,18 @@ const AddPlantModal: React.FC<AddPlantModalProps> = ({ isOpen, onClose, onSubmit
 
     setIsSubmitting(true);
     try {
-      // Pass the automatically set plantType
+
       await onSubmit({
         plantName,
-        plantType, // Pass the derived plant type
+        plantType, 
         selectedSeedId,
         quantity: quantityNum,
         imageData: imageBase64,
       });
-      // Parent handles closing on success
     } catch (err) {
       console.error("Error submitting plant:", err);
       setSubmitError(err instanceof Error ? err.message : "Failed to add plant. Please try again.");
-      setIsSubmitting(false); // Allow retry on error
+      setIsSubmitting(false);
     }
   };
 
@@ -211,9 +197,6 @@ const AddPlantModal: React.FC<AddPlantModalProps> = ({ isOpen, onClose, onSubmit
                    className="w-full px-3 py-2 border border-gray-300 rounded-md text-gray-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent sm:text-sm disabled:bg-gray-100" placeholder="e.g., Lettuce Row 1, Balcony Tomato" />
           </div>
 
-          {/* --- Plant Type Input Removed --- */}
-          {/* The plantType state is now set automatically when a seed is selected */}
-          {/* Optionally display the derived type */}
           {plantType && (
              <div className="text-sm text-gray-600">
                  <span className="font-medium">Derived Plant Type:</span> {plantType}
@@ -231,7 +214,6 @@ const AddPlantModal: React.FC<AddPlantModalProps> = ({ isOpen, onClose, onSubmit
             ) : availableSeeds.length === 0 ? (
                  <p className="text-sm text-gray-500">No seeds currently in stock in inventory.</p>
             ) : (
-                // Use the updated onChange handler
                 <select id="seedSelect" value={selectedSeedId} onChange={handleSeedChange} required disabled={isSubmitting}
                         className="w-full px-3 py-2 border border-gray-300 text-gray-500 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent sm:text-sm bg-white disabled:bg-gray-100">
                   <option value="" disabled>-- Select Seed --</option>

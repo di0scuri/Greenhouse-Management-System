@@ -8,11 +8,10 @@ import Link from 'next/link';
 import {
   LayoutDashboard, CalendarDays, LineChart, Settings, User, Bell, Search,
   PlusCircle, LogOut, Menu, X, Loader2, AlertTriangle, Plus, Leaf, ImageOff,
-  Clock, // Added Clock icon for events
-  ListChecks // Added for Events title
+  Clock,
+  ListChecks
 } from 'lucide-react';
 
-// Firebase Imports
 import {
     collection, getDocs, query, where, orderBy, 
     doc, runTransaction, Timestamp, serverTimestamp,
@@ -23,7 +22,6 @@ import { ref, set as setRTDB } from "firebase/database";
 import { firestore, auth, database } from '@/app/lib/firebase/config';
 import { useAuthState } from 'react-firebase-hooks/auth';
 
-// Import Components
 import Sidebar from '@/components/Sidebar';
 import NpkChart, { NpkDataPoint } from '@/components/NpkChart';
 import PlantCard from '@/components/PlantCard';
@@ -121,13 +119,11 @@ export default function DashboardPage() {
         setIsPlantsLoading(false);
         setPlantsData([]);
     } else if (!firestore) {
-        // Firestore not available
         setIsPlantsLoading(false);
         setPlantsError("Firestore service not available.");
     }
   }, [user, loadingAuth]); 
 
-  // Fetch NPK Data
   useEffect(() => {
     if (firestore) {
         
@@ -161,16 +157,15 @@ export default function DashboardPage() {
         setIsNpkLoading(false);
         setNpkError("Firestore service not available.");
     }
-  }, []); // Empty dependency array: Fetch NPK data once on mount
+  }, []);
 
-  // --- Fetch Upcoming Events ---
   useEffect(() => {
     if (!loadingAuth && user && firestore) {
         const fetchUpcomingEvents = async () => {
             setIsEventsLoading(true);
             setEventsError(null);
             try {
-                const now = Timestamp.now(); // Get current Firestore timestamp
+                const now = Timestamp.now();
                 const eventsRef = collection(firestore, 'events');
 
                 
@@ -212,18 +207,14 @@ export default function DashboardPage() {
         };
         fetchUpcomingEvents();
     } else if (!loadingAuth && !user) {
-        // No user, clear data and loading state
         setIsEventsLoading(false);
         setUpcomingEvents([]);
     } else if (!firestore) {
-        // Firestore not available
         setIsEventsLoading(false);
         setEventsError("Firestore service not available.");
     }
   }, [user, loadingAuth]);
 
-
-  // --- CRUD Handlers ---
   const handleAddPlantSubmit = async (newPlantData: NewPlantData) => {
       if (!user || !firestore || !database) {
           throw new Error("Authentication or Database service not ready.");
@@ -246,15 +237,14 @@ export default function DashboardPage() {
           const imagePath = `plantImages/${newPlantRef.id}`; 
           const imageRefRTDB = ref(database, imagePath);
           try {
-              await setRTDB(imageRefRTDB, imageData); // Save Base64 string
-              imageUrlToSave = imagePath; // Store path to save in Firestore
+              await setRTDB(imageRefRTDB, imageData);
+              imageUrlToSave = imagePath;
               imageSavedToRTDB = true;
               console.log("Image saved to RTDB:", imagePath);
           } catch (rtdbError) {
               console.error("RTDB Error saving image:", rtdbError);
-              // Decide if failure to save image should stop the whole process or just warn
               alert("Warning: Could not save the plant image. Proceeding without image.");
-              imageUrlToSave = null; // Ensure no broken path is saved
+              imageUrlToSave = null;
           }
       }
 
@@ -308,9 +298,8 @@ export default function DashboardPage() {
               locationZone: "Default Zone",
               ownerUid: user.uid,
           };
-          // Add to local state and re-sort
           setPlantsData(prev => [...prev, addedPlant].sort((a, b) => a.name.localeCompare(b.name)));
-          setIsAddPlantModalOpen(false); // Close the modal
+          setIsAddPlantModalOpen(false);
 
       } catch (error) {
           console.error("Add plant process failed: ", error);
@@ -323,10 +312,8 @@ export default function DashboardPage() {
                   console.log("Orphaned image removed from RTDB:", imageUrlToSave);
               } catch (cleanupError) {
                   console.error("Failed to remove orphaned RTDB image:", cleanupError);
-                  // Log cleanup error but don't overwrite original error
               }
           }
-          // Re-throw the original error to be caught by the modal's submit handler
           if (error instanceof Error) {
               throw error;
           } else {
@@ -335,24 +322,19 @@ export default function DashboardPage() {
       }
   };
 
-
-  // --- Conditional Rendering for Auth ---
   if (loadingAuth) {
     return <LoadingSpinner message="Authenticating user..." />;
   }
   if (!user) {
-    // Should be redirected by the useEffect hook, return null or a minimal message
-    // while the redirect happens.
+
     return null;
-    // Or return <div className="flex h-screen items-center justify-center">Redirecting to login...</div>;
+
   }
 
-  // --- Render Page ---
   return (
     <div className="flex h-screen bg-gray-100 font-sans">
-      {/* Sidebar */}
       <div className="hidden lg:block lg:flex-shrink-0"> <Sidebar /> </div>
-      {/* Mobile Sidebar & Overlay */}
+
       {isMobileMenuOpen && (
         <>
           <div className="fixed inset-y-0 left-0 z-40 lg:hidden"> <Sidebar /> </div>
@@ -362,11 +344,9 @@ export default function DashboardPage() {
 
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col overflow-hidden">
-        {/* Top Header Bar */}
         <header className="bg-white shadow-sm relative z-10">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             <div className="flex justify-between items-center h-16">
-              {/* Mobile Menu Button */}
               <div className="flex items-center">
                 <button
                   onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
@@ -375,48 +355,40 @@ export default function DashboardPage() {
                 >
                   {isMobileMenuOpen ? <X size={24} /> : <Menu size={24} />}
                 </button>
-                {/* Potentially add Desktop Title or Breadcrumbs here if needed */}
               </div>
-              {/* Right Side Icons (Search, Notifications) */}
               <div className="flex items-center space-x-4">
-                {/* Search Bar */}
                 <div className="relative">
                   <span className="absolute inset-y-0 left-0 flex items-center pl-3">
                     <Search className="h-5 w-5 text-gray-400" aria-hidden="true" />
                   </span>
                   <input
                     type="text"
-                    placeholder="Search plants..." // More specific placeholder
+                    placeholder="Search plants..."
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
                     className="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-md leading-5 bg-white placeholder-gray-500 focus:outline-none focus:placeholder-gray-400 focus:ring-1 focus:ring-green-500 focus:border-green-500 sm:text-sm"
                   />
                 </div>
-                {/* Notification Bell */}
                 <button className="p-2 rounded-full text-gray-400 hover:text-gray-500 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500">
                   <span className="sr-only">View notifications</span>
                   <Bell className="h-6 w-6" aria-hidden="true" />
                 </button>
-                {/* Consider adding User Profile/Logout Dropdown here */}
               </div>
             </div>
           </div>
-          {/* Sub-Header with Greeting and Date */}
           <div className="px-4 sm:px-6 lg:px-8 py-2 border-t border-gray-200">
             <h1 className="text-lg lg:text-2xl font-semibold text-gray-800">
-              Hello, {user.displayName || 'Farmer'}! {/* Use display name if available */}
+              Hello, {user.displayName || 'Farmer'}!
             </h1>
             <p className="text-xs lg:text-sm text-gray-500">{currentDate}</p>
           </div>
         </header>
 
-        {/* Main Content Scrollable Area */}
-        <main className="flex-1 overflow-y-auto p-6 lg:p-8 bg-gray-50"> {/* Slightly off-white bg */}
-          {/* Your Plants Section */}
+        <main className="flex-1 overflow-y-auto p-6 lg:p-8 bg-gray-50">
           <section className="mb-8">
             <div className="flex justify-between items-center mb-4">
               <h2 className="text-xl font-semibold text-gray-700">Your Plants</h2>
-              {/* Optionally add a direct link/button to add plant here too */}
+
             </div>
             {isPlantsLoading ? (
                 <div className="flex justify-center items-center h-40 text-gray-500">
@@ -430,14 +402,12 @@ export default function DashboardPage() {
                 </div>
              ) : (
                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6">
-                  {/* Filter plants based on searchTerm - Added filtering logic */}
                   {plantsData.filter(plant => plant.name.toLowerCase().includes(searchTerm.toLowerCase())).map((plant) => (
                     <PlantCard key={plant.id} plant={plant} />
                   ))}
-                  {/* Add Plant Button/Card */}
                   <button
                     onClick={() => setIsAddPlantModalOpen(true)}
-                    disabled={loadingAuth || !user} // Keep disabled logic
+                    disabled={loadingAuth || !user}
                     className="flex flex-col items-center justify-center bg-white border-2 border-dashed border-gray-300 rounded-lg text-gray-500 hover:bg-gray-50 hover:border-green-400 hover:text-green-600 transition aspect-square shadow-sm hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
                     aria-label="Add a new plant"
                   >
@@ -446,25 +416,21 @@ export default function DashboardPage() {
                   </button>
                 </div>
              )}
-             {/* Show message if no plants match search */}
              {!isPlantsLoading && !plantsError && plantsData.filter(plant => plant.name.toLowerCase().includes(searchTerm.toLowerCase())).length === 0 && plantsData.length > 0 && (
                  <p className="text-center text-gray-500 mt-6">No plants match your search term "{searchTerm}".</p>
              )}
-             {/* Show message if user has no plants at all */}
              {!isPlantsLoading && !plantsError && plantsData.length === 0 && (
                  <p className="text-center text-gray-500 mt-6">You haven't added any plants yet. Click the "Add Plant" button to get started!</p>
              )}
           </section>
 
-          {/* Events and NPK Graph Sections */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
-            {/* Events Section - UPDATED */}
             <section>
               <h2 className="text-xl font-semibold text-gray-700 mb-4 flex items-center">
-                  <ListChecks className="h-5 w-5 mr-2 text-blue-600" /> {/* Added color */}
+                  <ListChecks className="h-5 w-5 mr-2 text-blue-600" />
                   Upcoming Events / Tasks
               </h2>
-              <div className="bg-white rounded-lg shadow p-6 h-80 overflow-y-auto"> {/* Make scrollable */}
+              <div className="bg-white rounded-lg shadow p-6 h-80 overflow-y-auto">
                 {isEventsLoading ? (
                     <div className="flex justify-center items-center h-full text-gray-500">
                         <Loader2 className="h-6 w-6 animate-spin mr-2" /> Loading Events...
@@ -476,30 +442,27 @@ export default function DashboardPage() {
                         <span className="text-sm">{eventsError}</span>
                     </div>
                 ) : upcomingEvents.length > 0 ? (
-                    <ul className="space-y-3"> {/* Slightly reduced spacing */}
+                    <ul className="space-y-3">
                         {upcomingEvents.map((event) => (
                             <li key={event.id} className="p-3 border border-gray-200 rounded-md bg-gray-50 hover:bg-gray-100 transition">
                                 <p className="font-medium text-gray-800 text-sm mb-1">{event.message}</p>
-                                <div className="flex items-center text-xs text-gray-600 space-x-2"> {/* Slightly darker text */}
+                                <div className="flex items-center text-xs text-gray-600 space-x-2">
                                     <Clock size={12} />
-                                    {/* Format timestamp nicely */}
                                     <span>
-                                        {event.timestamp.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} {/* Shorter date */}
+                                        {event.timestamp.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
                                         {' '}
-                                        {event.timestamp.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true })} {/* Standard time */}
+                                        {event.timestamp.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true })}
                                     </span>
-                                    <span className="font-semibold text-blue-700">({event.type})</span> {/* Colored type */}
-                                    {/* Display status with color coding */}
+                                    <span className="font-semibold text-blue-700">({event.type})</span>
                                     {event.status && (
                                         <span className={`px-1.5 py-0.5 rounded-full text-xs font-medium ${
                                             event.status.toLowerCase() === 'pending' ? 'bg-yellow-100 text-yellow-800' :
                                             event.status.toLowerCase() === 'completed' ? 'bg-green-100 text-green-800' :
-                                            'bg-gray-100 text-gray-800' // Default style
+                                            'bg-gray-100 text-gray-800'
                                         }`}>
                                             {event.status}
                                         </span>
                                     )}
-                                    {/* Consider adding a link to the related plant if event.plantId exists */}
                                 </div>
                             </li>
                         ))}
@@ -510,11 +473,10 @@ export default function DashboardPage() {
               </div>
             </section>
 
-            {/* NPK Graph Section */}
             <section>
               <h2 className="text-xl font-semibold text-gray-700 mb-4 flex items-center">
-                  <LineChart className="h-5 w-5 mr-2 text-green-600" /> {/* Added color */}
-                  NPK Overview {/* Changed title slightly */}
+                  <LineChart className="h-5 w-5 mr-2 text-green-600" />
+                  NPK Overview
               </h2>
               <div className="bg-white rounded-lg shadow p-6 h-80 flex items-center justify-center">
                  {isNpkLoading ? (
@@ -531,7 +493,7 @@ export default function DashboardPage() {
                  ) : npkData.length > 0 ? (
                     <NpkChart data={npkData} />
                  ) : (
-                    <p className="text-center text-gray-500">No NPK data available to display.</p> // Message when data is empty
+                    <p className="text-center text-gray-500">No NPK data available to display.</p>
                  )}
               </div>
             </section>
@@ -539,12 +501,11 @@ export default function DashboardPage() {
         </main>
       </div>
 
-        {/* Render the Add Plant Modal */}
         {isAddPlantModalOpen && (
             <AddPlantModal
                 isOpen={isAddPlantModalOpen}
                 onClose={() => setIsAddPlantModalOpen(false)}
-                onSubmit={handleAddPlantSubmit} // Pass the corrected handler
+                onSubmit={handleAddPlantSubmit}
             />
         )}
     </div>

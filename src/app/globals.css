@@ -24,93 +24,75 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
-/* === FullCalendar Text Color Customization (globals.css) === */
 
-/* ---- Base Colors & Borders ---- */
-.fc { /* Target the main calendar container */
-  /* Set the border color for grid lines, etc. */
-  --fc-border-color: #d1d5db; /* Tailwind gray-300 - More visible than default */
+.fc {
+  --fc-border-color: #d1d5db;
 
-  /* Optional: Set default text color for elements not specifically targeted */
-  /* color: #374151; */ /* Tailwind gray-700 */
 }
 
-/* ---- Toolbar ---- */
 .fc .fc-toolbar-title {
-  color: #6b7280; /* text-gray-500 - Keeping this as requested before */
+  color: #6b7280;
   font-size: 1.25em;
 }
 
-/* ---- Day Headers (Top row: "Mon 3/31", "Sun", "Mon", etc.) ---- */
 .fc .fc-col-header-cell-cushion {
-    /* Darker text for better readability */
-    color: #374151 !important; /* text-gray-700 */
+    color: #374151 !important;
     text-decoration: none !important;
-    font-weight: 600; /* Semibold */
-    padding: 4px 6px; /* Add some padding */
+    font-weight: 600;
+    padding: 4px 6px;
 }
 
-/* ---- Day Numbers (Month View cells: "1", "2", "3") ---- */
 .fc .fc-daygrid-day-number {
-    /* Darker text for better readability */
-    color: #374151 !important; /* text-gray-700 */
+    color: #374151 !important;
     text-decoration: none !important;
-    padding: 6px; /* Increase padding slightly */
-    font-weight: 500; /* Medium weight */
+    padding: 6px;
+    font-weight: 500;
 }
 
-/* ---- Time Grid Axis Labels (Hours & "all-day") ---- */
 .fc .fc-timegrid-axis-frame,
 .fc .fc-timegrid-slot-label,
-.fc .fc-timegrid-axis-cushion, /* Includes 'all-day' */
-.fc .fc-axis { /* Fallback */
-    color: #6b7280 !important; /* text-gray-500 - Keeping this as requested before */
+.fc .fc-timegrid-axis-cushion,
+.fc .fc-axis { 
+    color: #6b7280 !important;
 }
 
-/* ---- Toolbar Buttons ---- */
 .fc .fc-button {
-    color: #374151; /* text-gray-700 */
+    color: #374151;
     background-color: white;
-    border-color: #d1d5db; /* gray-300 */
+    border-color: #d1d5db;
 }
 .fc .fc-button-primary {
-    background-color: #16a34a; /* green-600 */
+    background-color: #16a34a;
     border-color: #16a34a;
     color: white;
 }
 .fc .fc-button-primary:hover {
-    background-color: #15803d; /* green-700 */
+    background-color: #15803d;
     border-color: #15803d;
     color: white;
 }
 .fc .fc-button-primary:disabled {
-    background-color: #9ca3af; /* gray-400 */
+    background-color: #9ca3af;
     border-color: #9ca3af;
-    color: #e5e7eb; /* gray-200 */
+    color: #e5e7eb;
 }
 .fc .fc-button-active {
-    background-color: #f3f4f6; /* gray-100 */
-    border-color: #d1d5db; /* gray-300 */
-    color: #374151; /* text-gray-700 */
+    background-color: #f3f4f6; 
+    border-color: #d1d5db; 
+    color: #374151; 
 }
 
-/* ---- Today Cell Highlighting ---- */
 .fc .fc-day-today {
-    background-color: #fef9c3 !important; /* yellow-100 */
+    background-color: #fef9c3 !important;
 }
-/* Ensure text inside 'today' cell is dark enough */
 .fc .fc-day-today .fc-col-header-cell-cushion,
 .fc .fc-day-today .fc-daygrid-day-number {
-    color: #374151 !important; /* text-gray-700 */
-    font-weight: 700; /* Bold */
+    color: #374151 !important; 
+    font-weight: 700;
 }
 
-/* ---- Link Overrides ---- */
-/* Prevent browser default link colors from overriding our settings */
 a.fc-col-header-cell-cushion,
 a.fc-daygrid-day-number {
     color: inherit !important;
     text-decoration: none !important;
 }
-
-/* === End FullCalendar Customization === */
