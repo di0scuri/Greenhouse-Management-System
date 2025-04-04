@@ -100,7 +100,7 @@ const AddEventModal: React.FC<AddEventModalProps> = ({ isOpen, onClose, onSubmit
               onChange={(e) => setMessage(e.target.value)}
               required
               disabled={isSubmitting}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent sm:text-sm disabled:bg-gray-100"
+              className="w-full px-3 py-2 border border-gray-300 rounded-md text-gray-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent sm:text-sm disabled:bg-gray-100"
               placeholder="e.g., Apply fertilizer (10-10-10)"
             />
           </div>
@@ -116,7 +116,7 @@ const AddEventModal: React.FC<AddEventModalProps> = ({ isOpen, onClose, onSubmit
               onChange={(e) => setDateTime(e.target.value)}
               required
               disabled={isSubmitting}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent sm:text-sm disabled:bg-gray-100"
+              className="w-full px-3 py-2 border border-gray-300 text-gray-700 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent sm:text-sm disabled:bg-gray-100"
             />
           </div>
 
@@ -130,7 +130,7 @@ const AddEventModal: React.FC<AddEventModalProps> = ({ isOpen, onClose, onSubmit
               onChange={(e) => setType(e.target.value)}
               required
               disabled={isSubmitting}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent sm:text-sm bg-white disabled:bg-gray-100"
+              className="w-full px-3 py-2 text-gray-700 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent sm:text-sm bg-white disabled:bg-gray-100"
             >
               <option value="SCHEDULED_TASK">Scheduled Task</option>
               <option value="OBSERVATION">Observation</option>
@@ -149,7 +149,7 @@ const AddEventModal: React.FC<AddEventModalProps> = ({ isOpen, onClose, onSubmit
               value={plantId}
               onChange={(e) => setPlantId(e.target.value)}
               disabled={isSubmitting}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent sm:text-sm disabled:bg-gray-100"
+              className="w-full px-3 py-2 border border-gray-300 rounded-md text-gray-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent sm:text-sm disabled:bg-gray-100"
               placeholder="Enter Plant ID if applicable"
             />
           </div>
