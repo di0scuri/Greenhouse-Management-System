@@ -9,11 +9,11 @@ import {
   increment
 } from 'firebase/firestore';
 import { firestore, auth } from '@/app/lib/firebase/config';
-import { useAuthState } from 'react-firebase-hooks/auth';
+import { useAuthState } from 'react-firebase-hooks/auth'; 
 
-import Sidebar from '@/components/Sidebar';
+import Sidebar from '@/components/Sidebar'; 
 import InventoryItemModal from '@/components/InventoryItemModal';
-import UseItemModal, { InventoryItem as ModalInventoryItemProps } from '@/components/UseItemModal';
+import UseItemModal from '@/components/UseItemModal'; 
 import LoadingSpinner from '@/components/LoadingSpinner';
 import {
   Search, Bell, SlidersHorizontal, CheckCircle2, AlertTriangle, Loader2,
@@ -34,7 +34,6 @@ export interface InventoryItem {
   pricePerUnit: number;
   lowStockThreshold: number;
   lastUpdated?: Date;
-  ownerUid?: string; 
   n_percentage?: number;
   p_percentage?: number;
   k_percentage?: number;
@@ -45,7 +44,7 @@ interface LogEntryData {
     itemName: string;
     timestamp: any;
     type: 'Purchase' | 'Seed Planted' | 'Fertilizer Used' | 'Material Used' | 'Sale' | 'Adjustment' | 'Initial Stock';
-    quantityChange: number;
+    quantityChange: number; 
     costOrValuePerUnit: number;
     notes?: string;
     userId?: string;
@@ -72,16 +71,24 @@ interface PlantForDropdown {
     name: string;
 }
 
+
+// Helper Functions
 const formatCurrency = (value: number): string => {
     if (value === 0) return '-';
     return new Intl.NumberFormat('en-PH', {
-        style: 'currency', currency: 'PHP', minimumFractionDigits: 2, maximumFractionDigits: 2,
+        style: 'currency',
+        currency: 'PHP',
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
     }).format(value);
 };
+
 const formatDate = (date: Date | null | undefined): string => {
   if (!date) return 'N/A';
-  return date.toLocaleDateString('en-CA') + ' ' + date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+  return date.toLocaleDateString('en-CA') +
+         ' ' + date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
 };
+
 const getLogTypeStyle = (type: InventoryLogEntry['type']) => {
     switch (type) {
       case 'Purchase': return { Icon: ShoppingCart, color: 'text-blue-600', bgColor: 'bg-blue-100' };
@@ -95,8 +102,9 @@ const getLogTypeStyle = (type: InventoryLogEntry['type']) => {
     }
 };
 
+
 export default function InventoryPage() {
-  const [user, loadingAuth, authError] = useAuthState(auth);
+  const [user, loadingAuth] = useAuthState(auth);
   const router = useRouter();
 
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
@@ -124,81 +132,64 @@ export default function InventoryPage() {
 
   const [availablePlants, setAvailablePlants] = useState<PlantForDropdown[]>([]);
   const [isLoadingPlants, setIsLoadingPlants] = useState<boolean>(false);
-  const [plantsError, setPlantsError] = useState<string | null>(null);
 
 
   useEffect(() => {
-      if (!loadingAuth && !user && !authError) {
+      if (!loadingAuth && !user) {
           router.push('/login');
       }
-  }, [user, loadingAuth, authError, router]);
+  }, [user, loadingAuth, router]);
 
-  // Fetch Inventory Data Effect
   useEffect(() => {
     const inventoryTabs: Array<typeof activeTab> = ['Seeds', 'Fertilizers', 'Other'];
-    if (!user || !firestore) {
-        setIsInventoryLoading(false);
+    if (!user || !inventoryTabs.includes(activeTab)) {
         if (activeTab !== 'Logs') setInventoryData([]);
-        return;
-    }
-    if (!inventoryTabs.includes(activeTab)) {
         setIsInventoryLoading(false);
-        if (activeTab !== 'Logs') setInventoryData([]);
         return;
-    }
+    };
 
     const fetchInventoryData = async () => {
-      setIsInventoryLoading(true);
-      setInventoryError(null);
-      setInventoryData([]);
+      setIsInventoryLoading(true); setInventoryError(null); setInventoryData([]);
       try {
         const inventoryCollectionRef = collection(firestore, 'inventory');
         const q = query(
             inventoryCollectionRef,
-            where("category", "==", activeTab.toLowerCase()),
-            orderBy("name", "asc")
+            where("ownerUid", "==", user.uid),
+            where("category", "==", activeTab.toLowerCase())
         );
         const querySnapshot = await getDocs(q);
         const fetchedItems: InventoryItem[] = [];
-        querySnapshot.forEach((docSnap) => {
-            const data = docSnap.data();
+        querySnapshot.forEach((doc) => {
+            const data = doc.data();
             const lowStockValue = data.lowStockThreshold ?? data.lowStokThreshold;
+            const priceValue = data.pricePerUnit;
             fetchedItems.push({
-              id: docSnap.id,
-              name: data.name || 'Unnamed Item',
-              category: data.category || 'Unknown',
+              id: doc.id, name: data.name || 'Unnamed Item', category: data.category || 'Unknown',
               stock: typeof data.stock === 'number' ? data.stock : Number(data.stock) || 0,
-              unit: data.unit || '',
-              pricePerUnit: typeof data.pricePerUnit === 'number' ? data.pricePerUnit : Number(data.pricePerUnit) || 0,
+              unit: data.unit || '', pricePerUnit: typeof priceValue === 'number' ? priceValue : Number(priceValue) || 0,
               lowStockThreshold: typeof lowStockValue === 'number' ? lowStockValue : Number(lowStockValue) || 0,
               lastUpdated: data.lastUpdated instanceof Timestamp ? data.lastUpdated.toDate() : undefined,
-              ownerUid: data.ownerUid,
-              n_percentage: data.n_percentage,
+              n_percentage: data.n_percentage, 
               p_percentage: data.p_percentage,
               k_percentage: data.k_percentage,
             });
         });
+        fetchedItems.sort((a, b) => a.name.localeCompare(b.name));
         setInventoryData(fetchedItems);
-        console.log(`Workspaceed ${activeTab} (global):`, fetchedItems);
       } catch (err: any) {
-        console.error("Error fetching global inventory:", err);
-        if (err.code === 'permission-denied') {
-            setInventoryError(`Permission denied. Check Firestore security rules for 'inventory' collection (needs to allow general read access).`);
-        } else if (err.code === 'failed-precondition' || err.message.toLowerCase().includes('index')) {
-            setInventoryError(`Firestore index needed for global inventory query. Check console for link.`);
-            console.error("Firestore Indexing Error: Create a composite index for 'inventory' collection on (category ASC, name ASC).");
-        } else {
-            setInventoryError(`Failed to load ${activeTab}. ${err.message}`);
-        }
-      } finally {
-        setIsInventoryLoading(false);
-      }
+        console.error("Error fetching inventory:", err);
+        if (err.code === 'permission-denied') { setInventoryError(`Permission denied. Check Firestore rules for 'inventory'.`); }
+        else if (err.code === 'unimplemented' || err.message.includes('index') || err.code === 'failed-precondition') {
+            setInventoryError(`Firestore index needed for inventory query (ownerUid, category). Please create it.`);
+            console.error("Firestore Indexing Error: You likely need to create a composite index in Firestore for queries involving 'ownerUid' and 'category' on the 'inventory' collection.");
+        } else { setInventoryError(`Failed to load ${activeTab}.`); }
+      } finally { setIsInventoryLoading(false); }
     };
     fetchInventoryData();
-  }, [activeTab, user, firestore]);
+  }, [activeTab, user]);
 
   useEffect(() => {
-      if (activeTab !== 'Logs' || !user || !firestore) {
+      if (activeTab !== 'Logs' || !user) {
           setLogData([]);
           setIsLogsLoading(false);
           return;
@@ -210,14 +201,14 @@ export default function InventoryPage() {
               const q = query(logCollectionRef, where("userId", "==", user.uid), orderBy('timestamp', 'desc'));
               const querySnapshot = await getDocs(q);
               const fetchedLogs: InventoryLogEntry[] = [];
-              querySnapshot.forEach((docSnap) => {
-                  const data = docSnap.data();
+              querySnapshot.forEach((doc) => {
+                  const data = doc.data();
                   const quantityChange = Number(data.quantityChange) || 0;
                   const costOrValuePerUnit = Number(data.costOrValuePerUnit) || 0;
                   const type = ['Purchase', 'Seed Planted', 'Fertilizer Used', 'Material Used', 'Sale', 'Adjustment', 'Initial Stock'].includes(data.type) ? data.type : 'Adjustment';
                   fetchedLogs.push({
-                      id: docSnap.id, itemId: data.itemId || 'N/A', itemName: data.itemName || 'N/A',
-                      timestamp: data.timestamp instanceof Timestamp ? data.timestamp.toDate() : new Date(data.timestamp),
+                      id: doc.id, itemId: data.itemId || 'N/A', itemName: data.itemName || 'N/A',
+                      timestamp: data.timestamp instanceof Timestamp ? data.timestamp.toDate() : new Date(),
                       type: type as InventoryLogEntry['type'], quantityChange: quantityChange, costOrValuePerUnit: costOrValuePerUnit,
                       totalCostOrValue: Math.abs(quantityChange) * costOrValuePerUnit,
                       notes: data.notes || '', userId: data.userId, plantId: data.plantId
@@ -227,75 +218,78 @@ export default function InventoryPage() {
           } catch (err: any) {
               console.error("Error fetching inventory log:", err);
               if (err.code === 'permission-denied') { setLogsError(`Permission denied for 'inventory_log'.`); }
-              else if (err.code === 'failed-precondition' || err.message.toLowerCase().includes('index')) {
-                  setLogsError(`Firestore index needed for logs. Check console for link.`);
-                   console.error("Firestore Indexing Error: Create a composite index for 'inventory_log' on (userId ASC, timestamp DESC).");
+              else if (err.code === 'failed-precondition' || err.message.includes('index')) {
+                  setLogsError(`Firestore index needed for logs query (userId, timestamp). Please create it.`);
+                  console.error("Firestore Indexing Error: You likely need to create a composite index for 'inventory_log' on 'userId' (asc) and 'timestamp' (desc).");
               }
-              else { setLogsError(`Failed to load inventory log. ${err.message}`); }
+              else { setLogsError("Failed to load inventory log."); }
           } finally { setIsLogsLoading(false); }
       };
       fetchLogData();
-  }, [activeTab, user, firestore]);
+  }, [activeTab, user]);
 
   useEffect(() => {
     const fetchPlantsForDropdown = async () => {
-      if (user && firestore) {
+      if (user && firestore && isUseModalOpen) {
         setIsLoadingPlants(true);
-        setPlantsError(null);
         try {
           const plantsCollectionRef = collection(firestore, 'plants');
           const q = query(
             plantsCollectionRef,
             where("ownerUid", "==", user.uid),
-            orderBy("name", "asc")
+            orderBy("name")
           );
           const plantsSnapshot = await getDocs(q);
-          const fetchedPlantsData: PlantForDropdown[] = plantsSnapshot.docs.map(docSnap => ({
-            id: docSnap.id,
-            name: docSnap.data().name as string,
+          const fetchedPlants: PlantForDropdown[] = plantsSnapshot.docs.map(doc => ({
+            id: doc.id,
+            name: doc.data().name as string,
           }));
-          setAvailablePlants(fetchedPlantsData);
-        } catch (error: any) {
-          console.error("Error fetching plants for modal dropdown:", error);
-          setPlantsError(`Failed to load plants: ${error.message}`);
+          setAvailablePlants(fetchedPlants);
+          console.log("Fetched plants for UseItemModal:", fetchedPlants);
+        } catch (error) {
+          console.error("Error fetching plants for UseItemModal:", error);
           setAvailablePlants([]);
-           if (error.code === 'permission-denied') {
-             setPlantsError(`Permission denied. Check Firestore rules for 'plants' collection.`);
-           } else if (error.code === 'failed-precondition' || error.message.toLowerCase().includes('index')) {
-             setPlantsError(`Firestore index needed for plants query. Check console for link.`);
-             console.error("Firestore Indexing Error: Create a composite index for 'plants' collection on (ownerUid ASC, name ASC).");
-           }
         } finally {
           setIsLoadingPlants(false);
         }
-      } else {
-        setAvailablePlants([]);
-        setIsLoadingPlants(false);
+      } else if (!isUseModalOpen) {
+
       }
     };
-    if (user) {
-        fetchPlantsForDropdown();
-    }
-  }, [user, firestore]);
+
+    fetchPlantsForDropdown();
+  }, [user, isUseModalOpen]);
+
+
     const handleOpenCreateModal = () => { setModalMode('create'); setEditingItem(null); setIsModalOpen(true); };
     const handleOpenEditModal = (item: InventoryItem) => { setModalMode('edit'); setEditingItem(item); setIsModalOpen(true); };
     const handleOpenUseModal = (item: InventoryItem) => { setItemToUse(item); setIsUseModalOpen(true); };
 
     const writeInventoryLog = async (logData: Omit<LogEntryData, 'userId' | 'timestamp'> & { timestamp?: any }) => {
-        if (!user || !firestore) { console.error("Cannot write log: user or firestore not available."); return; }
+        if (!user) { console.error("Cannot write log: user not available."); return; }
         try {
             const logCollectionRef = collection(firestore, 'inventory_log');
             await addDoc(logCollectionRef, {
                 ...logData,
-                userId: user.uid, 
+                userId: user.uid,
                 timestamp: logData.timestamp || serverTimestamp()
             });
             console.log("Inventory log entry written.");
+            if (activeTab === 'Logs') {
+                //TODO: 
+                // Trigger re-fetch of logs (or optimistically add to logData state)
+                // For simplicity, we can rely on the useEffect for logs to re-fetch if needed,
+                // or add a manual refresh function if more immediate update is desired.
+                // Example of forcing a re-fetch (crude):
+                // setActiveTab('Other'); // Temporarily switch tab to force useEffect to re-run
+                // setTimeout(() => setActiveTab('Logs'), 0);
+                // Better: implement a refreshLogData function and call it here.
+            }
         } catch (logError) { console.error("Error writing inventory log:", logError); }
    };
 
     const handleModalSubmit = async (itemData: Partial<InventoryItem>, id?: string) => {
-        if (!user || !firestore) throw new Error("User not authenticated or Firestore not available.");
+        if (!user) throw new Error("User not authenticated.");
         const stockNum = Number(itemData.stock);
         const thresholdNum = Number(itemData.lowStockThreshold);
         const priceNum = Number(itemData.pricePerUnit);
@@ -307,36 +301,33 @@ export default function InventoryPage() {
             throw new Error("Stock, threshold, and price values cannot be negative.");
         }
 
-        const currentCategory = (itemData.category || activeTab).toLowerCase() as 'seeds' | 'fertilizers' | 'other';
-
-        const dataToSave: Omit<InventoryItem, 'id' | 'lastUpdated'> & {lastUpdated: any, ownerUid?: string} = {
+        const dataToSave = {
           name: itemData.name.trim(),
-          category: currentCategory,
           stock: stockNum,
           unit: itemData.unit.trim(),
           pricePerUnit: priceNum,
           lowStockThreshold: thresholdNum,
           lastUpdated: serverTimestamp(),
-          ownerUid: user.uid,
-          n_percentage: currentCategory === 'fertilizers' ? Number(itemData.n_percentage) || undefined : undefined,
-          p_percentage: currentCategory === 'fertilizers' ? Number(itemData.p_percentage) || undefined : undefined,
-          k_percentage: currentCategory === 'fertilizers' ? Number(itemData.k_percentage) || undefined : undefined,
+          ownerUid: user.uid, // Always set ownerUid
+          category: (activeTab as 'Seeds' | 'Fertilizers' | 'Other').toLowerCase(),
+          ...( (activeTab === 'Fertilizers' && itemData.category === 'fertilizers') && {
+            n_percentage: Number(itemData.n_percentage) || 0,
+            p_percentage: Number(itemData.p_percentage) || 0,
+            k_percentage: Number(itemData.k_percentage) || 0,
+          })
         };
-        if (dataToSave.n_percentage === undefined) delete dataToSave.n_percentage;
-        if (dataToSave.p_percentage === undefined) delete dataToSave.p_percentage;
-        if (dataToSave.k_percentage === undefined) delete dataToSave.k_percentage;
-
 
         if (modalMode === 'create') {
             try {
                 const inventoryCollectionRef = collection(firestore, 'inventory');
                 const docRef = await addDoc(inventoryCollectionRef, dataToSave);
-                await writeInventoryLog({
+                const logEntry: Omit<LogEntryData, 'userId' | 'timestamp'> = {
                     itemId: docRef.id, itemName: dataToSave.name, type: 'Initial Stock',
                     quantityChange: dataToSave.stock, costOrValuePerUnit: dataToSave.pricePerUnit,
                     notes: 'Item added via modal.', unit: dataToSave.unit
-                });
-                const newItemUI: InventoryItem = { ...dataToSave, id: docRef.id, lastUpdated: new Date(), category: dataToSave.category as string};
+                };
+                await writeInventoryLog(logEntry);
+                const newItemUI: InventoryItem = { ...dataToSave, id: docRef.id, lastUpdated: new Date(), category: dataToSave.category };
                 setInventoryData(prev => [...prev, newItemUI].sort((a, b) => a.name.localeCompare(b.name)));
                 setIsModalOpen(false);
             } catch (error) { console.error("Error adding item:", error); throw new Error("Failed to add item."); }
@@ -349,24 +340,25 @@ export default function InventoryPage() {
                 const oldStock = Number(oldData.stock) || 0;
                 const quantityChange = dataToSave.stock - oldStock;
 
-                await updateDoc(itemDocRef, dataToSave as any);
+                await updateDoc(itemDocRef, dataToSave);
 
                 if (quantityChange !== 0) {
-                    await writeInventoryLog({
+                    const logEntry: Omit<LogEntryData, 'userId' | 'timestamp'> = {
                         itemId: id, itemName: dataToSave.name, type: 'Adjustment',
                         quantityChange: quantityChange, costOrValuePerUnit: dataToSave.pricePerUnit,
                         notes: `Stock adjusted. Change: ${quantityChange > 0 ? '+' : ''}${quantityChange} ${dataToSave.unit}.`,
                         unit: dataToSave.unit
-                    });
+                    };
+                    await writeInventoryLog(logEntry);
                 }
-                setInventoryData(prev => prev.map(item => item.id === id ? { ...item, ...dataToSave, lastUpdated: new Date(), category: dataToSave.category as string } : item ).sort((a,b) => a.name.localeCompare(b.name)));
+                setInventoryData(prev => prev.map(item => item.id === id ? { ...item, ...dataToSave, lastUpdated: new Date(), category: dataToSave.category } : item ).sort((a,b) => a.name.localeCompare(b.name)));
                 setIsModalOpen(false);
             } catch (error) { console.error("Error updating item:", error); throw new Error("Failed to update item."); }
         }
    };
 
    const handleUseSubmit = async (item: InventoryItem, quantityUsed: number, notes?: string, plantId?: string) => {
-       if (!user || !firestore) throw new Error("User not authenticated or Firestore not available.");
+       if (!user) throw new Error("User not authenticated.");
        if (quantityUsed <= 0) throw new Error("Quantity used must be positive.");
 
        const itemDocRef = doc(firestore, 'inventory', item.id);
@@ -378,84 +370,99 @@ export default function InventoryPage() {
            await runTransaction(firestore, async (transaction) => {
                const itemDocSnap = await transaction.get(itemDocRef);
                if (!itemDocSnap.exists()) { throw new Error("Inventory item not found during transaction."); }
+
                const currentData = itemDocSnap.data();
                const currentStock = Number(currentData.stock) || 0;
+
                if (quantityUsed > currentStock) {
-                   throw new Error(`Stock changed. Only ${currentStock} ${item.unit} available.`);
+                   throw new Error(`Stock changed since modal opened. Only ${currentStock} ${item.unit} available.`);
                }
-               transaction.update(itemDocRef, { stock: increment(-quantityUsed), lastUpdated: serverTimestamp() });
+
+               transaction.update(itemDocRef, {
+                   stock: increment(-quantityUsed),
+                   lastUpdated: serverTimestamp()
+               });
+
                const logCollectionRef = collection(firestore, 'inventory_log');
                const logEntryRef = doc(logCollectionRef);
                const logDataForWrite: LogEntryData = {
-                   itemId: item.id, itemName: item.name, timestamp: serverTimestamp(), type: logType,
-                   quantityChange: -quantityUsed, costOrValuePerUnit: item.pricePerUnit, // Assuming pricePerUnit is the cost basis
-                   notes: notes || `${logType}${plantId ? ` for plant ${plantId}` : ''}.`, userId: user.uid,
-                   plantId: plantId || undefined, unit: item.unit,
+                   itemId: item.id,
+                   itemName: item.name,
+                   timestamp: serverTimestamp(),
+                   type: logType,
+                   quantityChange: -quantityUsed, 
+                   costOrValuePerUnit: item.pricePerUnit,
+                   notes: notes || `${logType} for ${plantId ? `plant ${plantId}` : 'general use'}.`,
+                   userId: user.uid,
+                   plantId: plantId || undefined, 
+                   unit: item.unit,
                };
                transaction.set(logEntryRef, logDataForWrite);
            });
+
            setInventoryData(prevData =>
                prevData.map(invItem =>
                    invItem.id === item.id ? { ...invItem, stock: invItem.stock - quantityUsed, lastUpdated: new Date() } : invItem
                )
            );
-           setIsUseModalOpen(false); setItemToUse(null);
-       } catch (error: any) { console.error("Error using item:", error); throw new Error(error.message || "Failed to record usage."); }
+           console.log(`Successfully used ${quantityUsed} ${item.unit} of ${item.name}.`);
+           setIsUseModalOpen(false); 
+           setItemToUse(null); 
+       } catch (error: any) {
+           console.error("Error using item (transaction failed):", error);
+
+           throw new Error(error.message || "Failed to record item usage due to a server error.");
+       }
    };
 
-   // Memoized calculations (keep as is)
+
    const filteredInventoryData = useMemo(() => {
-     const inventoryTabsArray: Array<typeof activeTab> = ['Seeds', 'Fertilizers', 'Other'];
-     if (!inventoryTabsArray.includes(activeTab)) return inventoryData;
-     if (!searchTerm.trim()) return inventoryData;
+     const inventoryTabs: Array<typeof activeTab> = ['Seeds', 'Fertilizers', 'Other'];
+     if (!inventoryTabs.includes(activeTab)) return inventoryData; // Return all if not on an inventory tab or no search term
+     if (!searchTerm) return inventoryData; // Return all if search term is empty
      const lowerCaseSearch = searchTerm.toLowerCase();
      return inventoryData.filter(item => item.name.toLowerCase().includes(lowerCaseSearch));
    }, [inventoryData, searchTerm, activeTab]);
 
    const filteredLogData = useMemo(() => {
-     if (activeTab !== 'Logs') return [];
-     let data = logData;
-     if (filterItemName.trim()) { const lower = filterItemName.toLowerCase(); data = data.filter(log => log.itemName.toLowerCase().includes(lower)); }
-     try {
-        const startDate = filterStartDate ? new Date(filterStartDate + 'T00:00:00') : null;
-        const endDate = filterEndDate ? new Date(filterEndDate + 'T23:59:59') : null;
-        if (startDate && !isNaN(startDate.getTime())) { data = data.filter(log => log.timestamp >= startDate); }
-        if (endDate && !isNaN(endDate.getTime())) { data = data.filter(log => log.timestamp <= endDate); }
-     } catch (e) {
-        console.error("Error parsing date filters", e)
-     }
-     return data;
+       if (activeTab !== 'Logs') return [];
+       let data = logData;
+       if (filterItemName) { const lower = filterItemName.toLowerCase(); data = data.filter(log => log.itemName.toLowerCase().includes(lower)); }
+       const startDate = filterStartDate ? new Date(filterStartDate + 'T00:00:00') : null; // Ensure correct time for start
+       const endDate = filterEndDate ? new Date(filterEndDate + 'T23:59:59') : null; // Ensure correct time for end
+       if (startDate && !isNaN(startDate.getTime())) { data = data.filter(log => log.timestamp >= startDate); }
+       if (endDate && !isNaN(endDate.getTime())) { data = data.filter(log => log.timestamp <= endDate); }
+       return data;
    }, [logData, filterItemName, filterStartDate, filterEndDate, activeTab]);
 
    const resetLogFilters = () => { setFilterItemName(''); setFilterStartDate(''); setFilterEndDate(''); };
+
    const lowStockItems = useMemo(() => inventoryData.filter(item => item.stock < item.lowStockThreshold).length, [inventoryData]);
    const lastUpdatedDate = useMemo(() => {
        if (isInventoryLoading || inventoryError || inventoryData.length === 0) return "N/A";
-       const dates = inventoryData.map(item => item.lastUpdated).filter(date => date instanceof Date && !isNaN(date.getTime())) as Date[];
-       if (dates.length === 0) return "N/A";
-       const mostRecentDate = new Date(Math.max(...dates.map(date => date.getTime())));
-       return mostRecentDate.toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric' });
+       const mostRecentDate = inventoryData.reduce((maxDate, item) => {
+           if (item.lastUpdated instanceof Date && !isNaN(item.lastUpdated.getTime())) {
+               return item.lastUpdated > maxDate ? item.lastUpdated : maxDate;
+           }
+           return maxDate;
+       }, new Date(0));
+       return mostRecentDate.getTime() === 0 ? "N/A" : mostRecentDate.toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric' });
    }, [inventoryData, isInventoryLoading, inventoryError]);
    const totalItemCount = useMemo(() => inventoryData.length, [inventoryData]);
 
-
    if (loadingAuth) { return <LoadingSpinner message="Authenticating..." />; }
-   if (!user && !loadingAuth) {
-     return <div className="flex h-screen items-center justify-center p-4 text-center">Please log in to view inventory. Redirecting...</div>;
-   }
+   if (!user && !loadingAuth) { return <div className="flex h-screen items-center justify-center p-4 text-center">Redirecting to login...</div>; }
 
    const CurrentCategoryIcon = activeTab === 'Seeds' ? Leaf : activeTab === 'Fertilizers' ? FlaskConical : activeTab === 'Other' ? Package : Inbox;
    const iconColor = activeTab === 'Seeds' ? 'text-green-500' : activeTab === 'Fertilizers' ? 'text-blue-500' : activeTab === 'Other' ? 'text-orange-500' : 'text-gray-500';
 
    return (
      <div className="flex h-screen bg-gray-100 font-sans">
-       {/* Sidebar */}
        <div className="hidden lg:block lg:flex-shrink-0"> <Sidebar /> </div>
        {isMobileMenuOpen && (<div className="fixed inset-y-0 left-0 z-40 lg:hidden"> <Sidebar /> </div>)}
        {isMobileMenuOpen && (<div className="fixed inset-0 z-30 bg-black opacity-50 lg:hidden" onClick={() => setIsMobileMenuOpen(false)}></div>)}
 
        <div className="flex-1 flex flex-col overflow-hidden">
-         {/* Header (Keep your existing header JSX) */}
          <header className="bg-white shadow-sm relative z-10 border-b">
            <div className="max-w-full mx-auto px-4 sm:px-6 lg:px-8">
              <div className="flex justify-between items-center h-16">
@@ -487,11 +494,9 @@ export default function InventoryPage() {
             </div>
          </header>
 
-         {/* Main Content Area (Scrollable) */}
          <main className="flex-1 overflow-y-auto p-6 lg:p-8">
            {activeTab === 'Seeds' || activeTab === 'Fertilizers' || activeTab === 'Other' ? (
              <>
-               {/* Summary Cards Section */}
                <section className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
                  <div className="bg-white p-5 rounded-lg shadow flex items-center space-x-4">
                    <CurrentCategoryIcon className={`h-8 w-8 ${iconColor} flex-shrink-0`} />
@@ -507,18 +512,9 @@ export default function InventoryPage() {
                  </div>
                </section>
 
-                {plantsError && (activeTab === 'Fertilizers' || activeTab === 'Other' || activeTab === 'Seeds') && (
-                    <div className="mb-4 p-3 bg-red-100 text-red-700 border border-red-200 rounded-md text-sm">
-                        <AlertTriangle size={16} className="inline mr-2" />
-                        Could not load plants for linking: {plantsError}
-                    </div>
-                )}
-
-               {/* Inventory Table Section */}
                <section className="bg-white rounded-lg shadow overflow-hidden">
                  <div className="overflow-x-auto">
                    <table className="min-w-full divide-y divide-gray-200">
-                     {/* ... Table Head ... */}
                      <thead className="bg-gray-50">
                        <tr>
                          <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Item</th>
@@ -528,22 +524,21 @@ export default function InventoryPage() {
                          <th scope="col" className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
                        </tr>
                      </thead>
-                     {/* Table Body */}
                      <tbody className="bg-white divide-y divide-gray-200">
                        {isInventoryLoading ? ( <tr><td colSpan={5}><div className="flex justify-center items-center text-gray-500 py-10 px-6"><Loader2 className="h-6 w-6 animate-spin mr-3" /><span>Loading {activeTab.toLowerCase()}...</span></div></td></tr> )
                        : inventoryError ? ( <tr><td colSpan={5}><div className="flex flex-col justify-center items-center text-red-600 py-10 px-6 text-center"><AlertTriangle className="h-8 w-8 mb-2" /><span className="font-semibold">Loading Failed</span><span className="text-sm mt-1">{inventoryError}</span></div></td></tr> )
                        : filteredInventoryData.length > 0 ? (
                            filteredInventoryData.map((item) => {
                                const isLowStock = item.stock < item.lowStockThreshold;
-                               const showUseButton = item.category === 'fertilizers' || item.category === 'other' || item.category === 'seeds';
+                               const showUseButton = item.category === 'fertilizers' || item.category === 'other' || item.category === 'seeds'; // Allow using seeds too
                                return (
                                  <tr key={item.id} className={`${isLowStock ? 'bg-red-50 hover:bg-red-100' : 'hover:bg-gray-50'} transition-colors duration-150 ease-in-out`}>
                                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{item.name}</td>
                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">{item.stock.toLocaleString()} {item.unit}</td>
                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">{formatCurrency(item.pricePerUnit)} / {item.unit}</td>
                                    <td className="px-6 py-4 whitespace-nowrap text-sm">
-                                     {isLowStock ? ( <span className="flex items-center text-red-600 font-medium"> <AlertTriangle size={16} className="mr-1.5 flex-shrink-0" /> Low stock! </span> )
-                                     : ( <span className="flex items-center text-green-600"> <CheckCircle2 size={16} className="mr-1.5 flex-shrink-0" /> Sufficient </span> )}
+                                     {isLowStock ? ( <span className="flex items-center text-red-600 font-medium"> <AlertTriangle size={16} className="mr-1.5 flex-shrink-0" aria-hidden="true" /> Low stock! </span> )
+                                     : ( <span className="flex items-center text-green-600"> <CheckCircle2 size={16} className="mr-1.5 flex-shrink-0" aria-hidden="true" /> Sufficient </span> )}
                                    </td>
                                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-center space-x-2">
                                      <button onClick={() => handleOpenEditModal(item)} className="text-blue-600 hover:text-blue-800 p-1 rounded hover:bg-blue-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 inline-flex items-center" aria-label={`Edit ${item.name}`}> <Edit2 size={18} /> </button>
@@ -562,7 +557,6 @@ export default function InventoryPage() {
              </>
            ) : ( // Render Logs Tab Content
              <>
-              {/* Logs Filter and Table Sections (Keep your existing JSX for logs) */}
                <section className="mb-6 p-4 bg-white rounded-lg shadow">
                  <h2 className="text-lg font-semibold text-gray-700 mb-3">Filter Logs</h2>
                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 items-end">
@@ -577,6 +571,7 @@ export default function InventoryPage() {
                    </div>
                  </div>
                </section>
+
                <section className="bg-white rounded-lg shadow overflow-hidden">
                  <div className="overflow-x-auto">
                    <table className="min-w-full divide-y divide-gray-200">
@@ -597,17 +592,17 @@ export default function InventoryPage() {
                        : filteredLogData.length > 0 ? (
                            filteredLogData.map((log) => {
                                const { Icon, color, bgColor } = getLogTypeStyle(log.type);
+                               const isStockIn = log.quantityChange > 0 && log.type !== 'Sale'; 
                                const isSale = log.type === 'Sale';
-                               const isStockOut = isSale || log.quantityChange < 0;
-                               const displayQuantity = isSale ? -log.quantityChange : log.quantityChange;
                                const showMonetaryValue = log.type === 'Purchase' || log.type === 'Sale' || log.type === 'Initial Stock';
                                return (
                                  <tr key={log.id} className="hover:bg-gray-50 transition-colors duration-150 ease-in-out">
                                    <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-600">{formatDate(log.timestamp)}</td>
                                    <td className="px-4 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{log.itemName}</td>
                                    <td className="px-4 py-4 whitespace-nowrap text-sm"> <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${bgColor} ${color}`}> <Icon size={14} className="mr-1.5" /> {log.type} </span> </td>
-                                   <td className={`px-4 py-4 whitespace-nowrap text-sm text-right font-medium ${isStockOut ? 'text-red-600' : 'text-green-600'}`}>
-                                     {displayQuantity > 0 && !isStockOut ? '+' : ''}{displayQuantity.toLocaleString()}
+                                   <td className={`px-4 py-4 whitespace-nowrap text-sm text-right font-medium ${isSale ? 'text-red-600' : (isStockIn ? 'text-green-600' : 'text-red-600')}`}>
+                                     {isSale ? '' : (isStockIn ? '+' : '') /* For sales, quantityChange is positive but it's an outflow of goods */}
+                                     {log.type === 'Sale' ? (-log.quantityChange).toLocaleString() : log.quantityChange.toLocaleString()}
                                    </td>
                                    <td className="px-4 py-4 whitespace-nowrap text-sm text-right text-gray-600"> {showMonetaryValue ? formatCurrency(log.costOrValuePerUnit) : '-'} </td>
                                    <td className="px-4 py-4 whitespace-nowrap text-sm text-right text-gray-800 font-medium"> {showMonetaryValue ? formatCurrency(log.totalCostOrValue) : '-'} </td>
@@ -624,9 +619,13 @@ export default function InventoryPage() {
            )}
          </main>
 
-         {/* Floating Action Button */}
+         {/* Floating Action Button for Add Item Modal */}
          {(activeTab === 'Seeds' || activeTab === 'Fertilizers' || activeTab === 'Other') && (
-             <button onClick={handleOpenCreateModal} className="fixed bottom-8 right-8 z-20 bg-green-600 text-white p-4 rounded-full shadow-lg hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 transition ease-in-out duration-150 hover:scale-105" aria-label={`Add new ${activeTab.slice(0,-1).toLowerCase()}`}>
+             <button
+                 onClick={handleOpenCreateModal}
+                 className="fixed bottom-8 right-8 z-20 bg-green-600 text-white p-4 rounded-full shadow-lg hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 transition ease-in-out duration-150 hover:scale-105"
+                 aria-label={`Add new ${activeTab.slice(0, -1).toLowerCase()}`} // e.g., "Add new seed"
+             >
                  <Plus size={24} />
              </button>
          )}
@@ -644,7 +643,7 @@ export default function InventoryPage() {
             />
         )}
 
-        {/* Use Item Modal - THIS IS WHERE THE PLANTS PROP IS PASSED */}
+        {/* Use Item Modal */}
         {isUseModalOpen && itemToUse && (
             <UseItemModal
                 isOpen={isUseModalOpen}
@@ -652,7 +651,6 @@ export default function InventoryPage() {
                 item={itemToUse}
                 onSubmit={handleUseSubmit}
                 plants={availablePlants}
-                isLoadingPlants={isLoadingPlants}
             />
         )}
      </div>

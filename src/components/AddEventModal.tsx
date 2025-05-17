@@ -170,7 +170,7 @@ const AddEventModal: React.FC<AddEventModalProps> = ({ isOpen, onClose, onSubmit
               className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-1 disabled:opacity-50 flex items-center min-w-[100px] justify-center" // Added min-width and justify-center
             >
               {isSubmitting ? (
-                 <Loader2 className="h-4 w-4 animate-spin" /> // Removed margin
+                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
                 'Add Event'
               )}

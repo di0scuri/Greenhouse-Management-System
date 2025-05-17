@@ -9,9 +9,12 @@ import {
   CalendarDays, // Keep this icon for the Calendar link
   LineChart,
   Settings,
-  Bean, // Assuming this represents Plants/Crops
+  Bean, 
   LogOut,
   Warehouse,
+  Logs,
+  LogsIcon,
+  CircleUserRound
 } from 'lucide-react';
 
 
@@ -32,7 +35,7 @@ const Sidebar: React.FC<SidebarProps> = (props) => {
     { name: 'Calendar', href: '/calendar', icon: CalendarDays }, 
     { name: 'Inventory',  href: '/inventory', icon: Warehouse},
     { name: 'Reports', href: '/reports', icon: LineChart },
-    { name: 'Settings', href: '/settings', icon: Settings },
+    { name: 'Profile', href: '/profile', icon: CircleUserRound },
     
   ];
 

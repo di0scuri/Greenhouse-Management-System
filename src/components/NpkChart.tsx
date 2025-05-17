@@ -15,10 +15,10 @@ import {
 
 
 export interface NpkDataPoint {
-  name: string; // Plant name or identifier
-  n: number;    // Nitrogen level (e.g., percentage)
-  p: number;    // Phosphorus level
-  k: number;    // Potassium level
+  name: string; 
+  n: number; 
+  p: number;
+  k: number;
 }
 
 interface NpkChartProps {
