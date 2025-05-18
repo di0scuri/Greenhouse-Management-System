@@ -24,7 +24,7 @@ import Link from 'next/link';
 interface PlantDetails {
   id: string;
   name: string;
-  type: string; // This should match the document ID in plantTypes collection
+  type: string;
   imageUrl?: string | null;
   datePlanted: Date;
   status: string;
@@ -73,6 +73,7 @@ interface InventoryLogEntry {
   unit?: string;
 }
 
+// Defines NPK and other stage-specific thresholds
 interface StageSpecificRequirements {
     name: string;
     startDay: number;
@@ -88,33 +89,37 @@ interface StageSpecificRequirements {
     targetK_ppm?: number;
 }
 
+// Defines top-level plant type configurations including environmental thresholds
 interface PlantLifecycle {
-  name: string;
+  name: string; // e.g., "Cabbage", should match the document ID in plantTypes
   fertilizeDays: number[];
   maturityDays: number;
   harvestDays: number;
   spacingCm: number;
+  // Top-level environmental thresholds
   minTemp?: number;
   maxTemp?: number;
   minHumidity?: number;
   maxHumidity?: number;
   minPH?: number;
   maxPH?: number;
-  minEC?: number; // Assuming Firestore field name is minEC for EC values
-  maxEC?: number; // Assuming Firestore field name is maxEC for EC values
+  minEC?: number; // Assumed to be in mS/cm or a consistent unit that matches sensor data
+  maxEC?: number;
   stages: StageSpecificRequirements[];
 }
 
+// Represents the combined requirements for the CURRENT active stage
 interface CurrentStageCombinedRequirements extends StageSpecificRequirements {
-    minTempC?: number;
-    maxTempC?: number;
-    minHumidityPercent?: number;
-    maxHumidityPercent?: number;
-    minPH?: number; // Directly from PlantLifecycle
-    maxPH?: number; // Directly from PlantLifecycle
-    minEC_mS_cm?: number; // Mapped from PlantLifecycle.minEC
-    maxEC_mS_cm?: number; // Mapped from PlantLifecycle.maxEC
+    minTempC?: number;        // Mapped from PlantLifecycle.minTemp
+    maxTempC?: number;        // Mapped from PlantLifecycle.maxTemp
+    minHumidityPercent?: number; // Mapped from PlantLifecycle.minHumidity
+    maxHumidityPercent?: number; // Mapped from PlantLifecycle.maxHumidity
+    minPH?: number;           // Directly from PlantLifecycle.minPH
+    maxPH?: number;           // Directly from PlantLifecycle.maxPH
+    minEC_mS_cm?: number;     // Mapped from PlantLifecycle.minEC
+    maxEC_mS_cm?: number;     // Mapped from PlantLifecycle.maxEC
 }
+
 
 interface UserSettings {
     defaultProfitMargin?: number;
@@ -141,8 +146,8 @@ interface FormattedFertilizerRecommendation {
 
 // --- Helper Functions ---
 const formatCurrency = (value: number, forceZeroDisplay = false): string => {
-    if (value === 0 && !forceZeroDisplay) return '-';
-    if (isNaN(value) || !isFinite(value)) return 'N/A';
+    if (value === 0 && !forceZeroDisplay && value !== null && value !== undefined) return '-';
+    if (isNaN(value) || value === null || value === undefined) return 'N/A';
     return new Intl.NumberFormat('en-PH', { style: 'currency', currency: 'PHP', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value);
 };
 
@@ -288,28 +293,14 @@ export default function PlantDetailPage() {
                     console.warn(`Lifecycle data not found for type: ${plantDetails.type}. Trying Default.`);
                     docSnap = await getDoc(defaultTypeDocRef);
                 }
-                if (docSnap.exists()) {
-                    setPlantLifecycleData(docSnap.data() as PlantLifecycle);
-                } else {
-                    setLifecycleError(`Plant configuration not found for type "${plantDetails.type}" or Default.`);
-                    setPlantLifecycleData(null);
-                }
-            } catch (err) {
-                console.error("Fetch lifecycle error:", err);
-                setLifecycleError("Failed to load plant lifecycle configuration.");
-                setPlantLifecycleData(null);
-            } finally {
-                setIsLifecycleLoading(false);
-            }
+                if (docSnap.exists()) { setPlantLifecycleData(docSnap.data() as PlantLifecycle); }
+                else { setLifecycleError(`Plant configuration not found for type "${plantDetails.type}" or Default.`); setPlantLifecycleData(null); }
+            } catch (err) { console.error("Fetch lifecycle error:", err); setLifecycleError("Failed to load plant lifecycle configuration."); setPlantLifecycleData(null); }
+            finally { setIsLifecycleLoading(false); }
         };
         fetchLifecycleData();
-    } else if (plantDetails && !plantDetails.type) {
-        setIsLifecycleLoading(false);
-        setLifecycleError("Plant type is missing for this plant.");
-        setPlantLifecycleData(null);
-    } else if (!plantDetails && !isLoading) { // Only set loading to false if not already loading plant details
-        setIsLifecycleLoading(false);
-    }
+    } else if (plantDetails && !plantDetails.type) { setIsLifecycleLoading(false); setLifecycleError("Plant type is missing for this plant."); setPlantLifecycleData(null); }
+    else if (!plantDetails && !isLoading) { setIsLifecycleLoading(false); }
   }, [plantDetails, firestore, isLoading]);
 
   // Fetch User Settings
@@ -414,7 +405,7 @@ export default function PlantDetailPage() {
           const timeDiff = today.getTime() - plantedDate.getTime();
           const daysSincePlanted = Math.max(0, Math.floor(timeDiff / (1000 * 60 * 60 * 24)));
 
-          let activeStage: StageSpecificRequirements | null = null;
+          let activeStage: StageRequirements | null = null;
           for (let i = plantLifecycleData.stages.length - 1; i >= 0; i--) {
               if (daysSincePlanted >= plantLifecycleData.stages[i].startDay) {
                   activeStage = plantLifecycleData.stages[i];
@@ -434,8 +425,8 @@ export default function PlantDetailPage() {
                   maxHumidityPercent: plantLifecycleData.maxHumidity,
                   minPH: plantLifecycleData.minPH,
                   maxPH: plantLifecycleData.maxPH,
-                  minEC_mS_cm: plantLifecycleData.minEC, // Assuming minEC from Firestore is for mS/cm
-                  maxEC_mS_cm: plantLifecycleData.maxEC, // Assuming maxEC from Firestore is for mS/cm
+                  minEC_mS_cm: plantLifecycleData.minEC,
+                  maxEC_mS_cm: plantLifecycleData.maxEC,
               };
               setCurrentStageRequirements(combinedReqs);
           } else {
@@ -587,23 +578,74 @@ export default function PlantDetailPage() {
 
   const sendEmailNotification = useCallback(async (alertType: NotificationCooldownKey, currentValue: string | number, thresholdValue: string | number | undefined) => {
     setEmailError(null);
-    if (!user || !user.email || !plantDetails) { console.warn("Missing user/plant data for notification."); return; }
+    if (!plantDetails || !firestore) {
+        console.warn("[EmailJS] Plant details or Firestore not available for notification.");
+        return;
+    }
     const now = Date.now();
-    const lastSent = notificationCooldowns.current[alertType];
-    if (lastSent && (now - lastSent < COOLDOWN_PERIOD_MS)) { return; }
+    const cooldownKeyForPlantAlert = `${plantId}_${alertType}`;
+    // @ts-ignore
+    const lastSent = notificationCooldowns.current[cooldownKeyForPlantAlert];
+    if (lastSent && (now - lastSent < COOLDOWN_PERIOD_MS)) {
+        console.log(`[EmailJS] Cooldown active for ${alertType} on plant ${plantId}.`);
+        return;
+    }
     const serviceId = process.env.NEXT_PUBLIC_EMAILJS_SERVICE_ID;
     const templateId = process.env.NEXT_PUBLIC_EMAILJS_TEMPLATE_ID;
     const publicKey = process.env.NEXT_PUBLIC_EMAILJS_PUBLIC_KEY;
-    if (!serviceId || !templateId || !publicKey) { console.error("EmailJS credentials missing."); setEmailError("Email service not configured."); return; }
-    const templateParams = { plant_name: plantDetails.name, alert_type: alertType, current_value: String(currentValue), threshold_value: String(thresholdValue ?? 'N/A'), user_email: user.email, user_name: user.displayName || 'User', plant_link: `${window.location.origin}/plants/${plantId}` };
+    if (!serviceId || !templateId || !publicKey) {
+        console.error("[EmailJS] Credentials missing in .env.local");
+        setEmailError("Email service not configured correctly.");
+        return;
+    }
     try {
-        await emailjs.send(serviceId, templateId, templateParams, publicKey);
-        notificationCooldowns.current[alertType] = now;
-    } catch (error) { console.error('EmailJS failed:', error); setEmailError(`Failed to send ${alertType} notification.`); }
-  }, [user, plantDetails, plantId]);
+        const usersCollectionRef = collection(firestore, 'users');
+        const usersSnapshot = await getDocs(usersCollectionRef);
+        if (usersSnapshot.empty) {
+            console.warn("[EmailJS] No users found in 'users' collection.");
+            return;
+        }
+        console.log(`[EmailJS] Alert: ${alertType} for Plant: ${plantDetails.name}. Current: ${currentValue}, Threshold: ${thresholdValue}. Notifying ${usersSnapshot.size} users.`);
+        let emailsSentCount = 0;
+        for (const userDoc of usersSnapshot.docs) {
+            const userData = userDoc.data();
+            const recipientEmail = userData.email;
+            const recipientName = userData.displayName || 'User';
+            if (recipientEmail && typeof recipientEmail === 'string' && recipientEmail.trim() !== '') {
+                const templateParams = {
+                    plant_name: plantDetails.name, alert_type: alertType, current_value: String(currentValue),
+                    threshold_value: String(thresholdValue ?? 'N/A'), email: recipientEmail, // Ensure 'email' matches your EmailJS template
+                    user_name: recipientName, plant_link: `${window.location.origin}/plants/${plantId}`
+                };
+                console.log(`[EmailJS] Preparing to send to: ${recipientEmail} with params:`, JSON.stringify(templateParams));
+                try {
+                    await emailjs.send(serviceId, templateId, templateParams, publicKey);
+                    console.log(`[EmailJS] Notification sent to ${recipientEmail} for ${alertType}`);
+                    emailsSentCount++;
+                } catch (emailError: any) {
+                    console.error(`[EmailJS] Failed to send to ${recipientEmail}:`, emailError.status, emailError.text);
+                    setEmailError(prev => prev ? `${prev}, Failed for ${recipientEmail}` : `Failed for ${recipientEmail}: ${emailError.text || 'Unknown EmailJS error'}`);
+                }
+            } else {
+                console.warn(`[EmailJS] User document ${userDoc.id} missing valid email.`);
+            }
+        }
+        if (emailsSentCount > 0) {
+            // @ts-ignore
+            notificationCooldowns.current[cooldownKeyForPlantAlert] = now;
+            console.log(`[EmailJS] Attempted to send ${emailsSentCount} emails for ${alertType} on plant ${plantId}.`);
+        } else {
+            console.warn(`[EmailJS] No emails sent for ${alertType} on plant ${plantId}.`);
+            if (!emailError) { setEmailError("No valid recipients found or all email attempts failed."); }
+        }
+    } catch (fetchUsersError: any) {
+        console.error("[EmailJS] Error fetching users for notification:", fetchUsersError);
+        setEmailError("Failed to fetch user list for notifications.");
+    }
+  }, [plantDetails, plantId, firestore]);
 
   useEffect(() => {
-    if (!isSensorHistoryLoading && !isLifecycleLoading && latestReading && currentStageRequirements && user?.email && plantDetails) {
+    if (!isSensorHistoryLoading && !isLifecycleLoading && latestReading && currentStageRequirements && plantDetails) {
         if (environmentStatus.temp?.status === 'Low') sendEmailNotification('tempLow', latestReading.temperature ?? 'N/A', currentStageRequirements.minTempC);
         if (environmentStatus.temp?.status === 'High') sendEmailNotification('tempHigh', latestReading.temperature ?? 'N/A', currentStageRequirements.maxTempC);
         if (environmentStatus.humidity?.status === 'Low') sendEmailNotification('humidityLow', latestReading.humidity ?? 'N/A', currentStageRequirements.minHumidityPercent);
@@ -619,7 +661,7 @@ export default function PlantDetailPage() {
         if (npkStatus.k.status === 'Low') sendEmailNotification('kLow', latestReading.potassium ?? 'N/A', currentStageRequirements.minK);
         if (npkStatus.k.status === 'High') sendEmailNotification('kHigh', latestReading.potassium ?? 'N/A', currentStageRequirements.maxK);
     }
-  }, [latestReading, currentStageRequirements, environmentStatus, npkStatus, isSensorHistoryLoading, isLifecycleLoading, user, plantDetails, sendEmailNotification]);
+  }, [latestReading, currentStageRequirements, environmentStatus, npkStatus, isSensorHistoryLoading, isLifecycleLoading, plantDetails, sendEmailNotification]);
 
 
   const handleAddSensorReadingSubmit = async (data: SensorReadingData) => {
@@ -829,10 +871,10 @@ export default function PlantDetailPage() {
                                     <div>
                                         <p className="text-sm font-medium text-gray-700 mb-1">Environment:</p>
                                         <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-center text-xs">
-                                            {environmentStatus.temp && <div className={`p-1.5 rounded ${environmentStatus.temp.color.replace('text-', 'bg-').replace('-600', '-100')}`}> <p className="font-semibold text-gray-900">Temp</p> <p className={environmentStatus.temp.color}>{environmentStatus.temp.status}</p> </div>}
-                                            {environmentStatus.humidity && <div className={`p-1.5 rounded ${environmentStatus.humidity.color.replace('text-', 'bg-').replace('-600', '-100')}`}> <p className="font-semibold text-gray-900">Humidity</p> <p className={environmentStatus.humidity.color}>{environmentStatus.humidity.status}</p> </div>}
-                                            {environmentStatus.ph && <div className={`p-1.5 rounded ${environmentStatus.ph.color.replace('text-', 'bg-').replace('-600', '-100')}`}> <p className="font-semibold text-gray-900">pH</p> <p className={environmentStatus.ph.color}>{environmentStatus.ph.status}</p> </div>}
-                                            {environmentStatus.ec && <div className={`p-1.5 rounded ${environmentStatus.ec.color.replace('text-', 'bg-').replace('-600', '-100')}`}> <p className="font-semibold text-gray-900">EC</p> <p className={environmentStatus.ec.color}>{environmentStatus.ec.status}</p> </div>}
+                                            {environmentStatus.temp && <div className={`p-1.5 rounded ${environmentStatus.temp.color.replace('text-', 'bg-').replace('-600', '-100')}`}> <p className="font-semibold">Temp</p> <p className={environmentStatus.temp.color}>{environmentStatus.temp.status}</p> </div>}
+                                            {environmentStatus.humidity && <div className={`p-1.5 rounded ${environmentStatus.humidity.color.replace('text-', 'bg-').replace('-600', '-100')}`}> <p className="font-semibold">Humidity</p> <p className={environmentStatus.humidity.color}>{environmentStatus.humidity.status}</p> </div>}
+                                            {environmentStatus.ph && <div className={`p-1.5 rounded ${environmentStatus.ph.color.replace('text-', 'bg-').replace('-600', '-100')}`}> <p className="font-semibold">pH</p> <p className={environmentStatus.ph.color}>{environmentStatus.ph.status}</p> </div>}
+                                            {environmentStatus.ec && <div className={`p-1.5 rounded ${environmentStatus.ec.color.replace('text-', 'bg-').replace('-600', '-100')}`}> <p className="font-semibold">EC</p> <p className={environmentStatus.ec.color}>{environmentStatus.ec.status}</p> </div>}
                                         </div>
                                         {environmentStatus.temp?.status === 'Low' && <p className="text-xs text-orange-600 mt-1 flex items-center"><AlertCircle size={14} className="mr-1"/> Consider increasing temperature.</p>}
                                         {environmentStatus.temp?.status === 'High' && <p className="text-xs text-red-600 mt-1 flex items-center"><AlertCircle size={14} className="mr-1"/> Consider decreasing temperature.</p>}
@@ -846,9 +888,9 @@ export default function PlantDetailPage() {
                                     <div>
                                         <p className="text-sm font-medium text-gray-700 mb-1 mt-3">Nutrients (NPK):</p>
                                         <div className="grid grid-cols-3 gap-2 text-center text-xs">
-                                            <div className={`p-1.5 rounded ${npkStatus.n.color.replace('text-', 'bg-').replace('-600', '-100')}`}> <p className="font-semibold text-gray-900">N</p> <p className={npkStatus.n.color}>{npkStatus.n.status}</p> </div>
-                                            <div className={`p-1.5 rounded ${npkStatus.p.color.replace('text-', 'bg-').replace('-600', '-100')}`}> <p className="font-semibold text-gray-900">P</p> <p className={npkStatus.p.color}>{npkStatus.p.status}</p> </div>
-                                            <div className={`p-1.5 rounded ${npkStatus.k.color.replace('text-', 'bg-').replace('-600', '-100')}`}> <p className="font-semibold text-gray-900">K</p> <p className={npkStatus.k.color}>{npkStatus.k.status}</p> </div>
+                                            <div className={`p-1.5 rounded ${npkStatus.n.color.replace('text-', 'bg-').replace('-600', '-100')}`}> <p className="font-semibold">N</p> <p className={npkStatus.n.color}>{npkStatus.n.status}</p> </div>
+                                            <div className={`p-1.5 rounded ${npkStatus.p.color.replace('text-', 'bg-').replace('-600', '-100')}`}> <p className="font-semibold">P</p> <p className={npkStatus.p.color}>{npkStatus.p.status}</p> </div>
+                                            <div className={`p-1.5 rounded ${npkStatus.k.color.replace('text-', 'bg-').replace('-600', '-100')}`}> <p className="font-semibold">K</p> <p className={npkStatus.k.color}>{npkStatus.k.status}</p> </div>
                                         </div>
                                     </div>
                                     <div className="mt-3">
