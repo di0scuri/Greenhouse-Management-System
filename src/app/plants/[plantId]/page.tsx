@@ -73,8 +73,7 @@ interface InventoryLogEntry {
   unit?: string;
 }
 
-// Defines NPK and other stage-specific thresholds
-interface StageSpecificRequirements {
+interface StageSpecificRequirements { // Renamed from StageRequirements for clarity
     name: string;
     startDay: number;
     description?: string;
@@ -89,9 +88,8 @@ interface StageSpecificRequirements {
     targetK_ppm?: number;
 }
 
-// Defines top-level plant type configurations including environmental thresholds
 interface PlantLifecycle {
-  name: string; // e.g., "Cabbage", should match the document ID in plantTypes
+  name: string;
   fertilizeDays: number[];
   maturityDays: number;
   harvestDays: number;
@@ -103,21 +101,21 @@ interface PlantLifecycle {
   maxHumidity?: number;
   minPH?: number;
   maxPH?: number;
-  minEC?: number; // Assumed to be in mS/cm or a consistent unit that matches sensor data
-  maxEC?: number;
+  minEC?: number; // Assuming this is the field name from Firestore for EC
+  maxEC?: number; // Assuming this is the field name from Firestore for EC
   stages: StageSpecificRequirements[];
 }
 
-// Represents the combined requirements for the CURRENT active stage
+// This interface represents the combined requirements for the CURRENT stage
 interface CurrentStageCombinedRequirements extends StageSpecificRequirements {
-    minTempC?: number;        // Mapped from PlantLifecycle.minTemp
-    maxTempC?: number;        // Mapped from PlantLifecycle.maxTemp
-    minHumidityPercent?: number; // Mapped from PlantLifecycle.minHumidity
-    maxHumidityPercent?: number; // Mapped from PlantLifecycle.maxHumidity
-    minPH?: number;           // Directly from PlantLifecycle.minPH
-    maxPH?: number;           // Directly from PlantLifecycle.maxPH
-    minEC_mS_cm?: number;     // Mapped from PlantLifecycle.minEC
-    maxEC_mS_cm?: number;     // Mapped from PlantLifecycle.maxEC
+    minTempC?: number;
+    maxTempC?: number;
+    minHumidityPercent?: number;
+    maxHumidityPercent?: number;
+    minPH?: number;
+    maxPH?: number;
+    minEC_mS_cm?: number; // This will be mapped from PlantLifecycle.minEC
+    maxEC_mS_cm?: number; // This will be mapped from PlantLifecycle.maxEC
 }
 
 
@@ -194,6 +192,16 @@ type NotificationCooldown = {
 };
 const COOLDOWN_PERIOD_MS = 6 * 60 * 60 * 1000;
 
+const alertTypeMapping: Record<NotificationCooldownKey, string> = {
+    tempLow: "Low Temperature", tempHigh: "High Temperature",
+    humidityLow: "Low Humidity", humidityHigh: "High Humidity",
+    phLow: "Low pH", phHigh: "High pH",
+    ecLow: "Low EC", ecHigh: "High EC",
+    nLow: "Low Nitrogen", nHigh: "High Nitrogen",
+    pLow: "Low Phosphorus", pHigh: "High Phosphorus",
+    kLow: "Low Potassium", kHigh: "High Potassium",
+};
+
 export default function PlantDetailPage() {
   const [user, loadingAuth, errorAuth] = useAuthState(auth);
   const router = useRouter();
@@ -240,10 +248,7 @@ export default function PlantDetailPage() {
   useEffect(() => {
     if (!loadingAuth && user && firestore && plantId) {
       const fetchPlantAndImage = async () => {
-          setIsLoading(true);
-          setIsImageLoading(true);
-          setError(null);
-          setImageData(null);
+          setIsLoading(true); setIsImageLoading(true); setError(null); setImageData(null);
           try {
               const plantDocRef = doc(firestore, 'plants', plantId);
               const plantDocSnap = await getDoc(plantDocRef);
@@ -278,7 +283,7 @@ export default function PlantDetailPage() {
       fetchPlantAndImage();
     } else if (!plantId && !loadingAuth) { setError("Plant ID missing in URL."); setIsLoading(false); setIsImageLoading(false); }
       else if ((!firestore || !database) && !loadingAuth && user) { setError("Database service is not available."); setIsLoading(false); setIsImageLoading(false); }
-  }, [plantId, user, loadingAuth]);
+  }, [plantId, user, loadingAuth]); // firestore and database are stable, no need in deps if initialized once globally
 
   // Fetch Plant Lifecycle Data
  useEffect(() => {
@@ -405,7 +410,7 @@ export default function PlantDetailPage() {
           const timeDiff = today.getTime() - plantedDate.getTime();
           const daysSincePlanted = Math.max(0, Math.floor(timeDiff / (1000 * 60 * 60 * 24)));
 
-          let activeStage: StageRequirements | null = null;
+          let activeStage: StageSpecificRequirements | null = null;
           for (let i = plantLifecycleData.stages.length - 1; i >= 0; i--) {
               if (daysSincePlanted >= plantLifecycleData.stages[i].startDay) {
                   activeStage = plantLifecycleData.stages[i];
@@ -576,18 +581,18 @@ export default function PlantDetailPage() {
   }, [npkStatus, availableFertilizers, isFertilizersLoading, currentStageRequirements, plantDetails]);
 
 
-  const sendEmailNotification = useCallback(async (alertType: NotificationCooldownKey, currentValue: string | number, thresholdValue: string | number | undefined) => {
+  const sendEmailNotification = useCallback(async (internalAlertType: NotificationCooldownKey, currentValue: string | number, thresholdValue: string | number | undefined) => {
     setEmailError(null);
     if (!plantDetails || !firestore) {
         console.warn("[EmailJS] Plant details or Firestore not available for notification.");
         return;
     }
     const now = Date.now();
-    const cooldownKeyForPlantAlert = `${plantId}_${alertType}`;
+    const cooldownKeyForPlantAlert = `${plantId}_${internalAlertType}`;
     // @ts-ignore
     const lastSent = notificationCooldowns.current[cooldownKeyForPlantAlert];
     if (lastSent && (now - lastSent < COOLDOWN_PERIOD_MS)) {
-        console.log(`[EmailJS] Cooldown active for ${alertType} on plant ${plantId}.`);
+        console.log(`[EmailJS] Cooldown active for ${internalAlertType} on plant ${plantId}.`);
         return;
     }
     const serviceId = process.env.NEXT_PUBLIC_EMAILJS_SERVICE_ID;
@@ -598,6 +603,7 @@ export default function PlantDetailPage() {
         setEmailError("Email service not configured correctly.");
         return;
     }
+    const descriptiveAlertType = alertTypeMapping[internalAlertType] || internalAlertType;
     try {
         const usersCollectionRef = collection(firestore, 'users');
         const usersSnapshot = await getDocs(usersCollectionRef);
@@ -605,7 +611,7 @@ export default function PlantDetailPage() {
             console.warn("[EmailJS] No users found in 'users' collection.");
             return;
         }
-        console.log(`[EmailJS] Alert: ${alertType} for Plant: ${plantDetails.name}. Current: ${currentValue}, Threshold: ${thresholdValue}. Notifying ${usersSnapshot.size} users.`);
+        console.log(`[EmailJS] Alert: ${descriptiveAlertType} for Plant: ${plantDetails.name}. Current: ${currentValue}, Threshold: ${thresholdValue}. Attempting to notify ${usersSnapshot.size} users.`);
         let emailsSentCount = 0;
         for (const userDoc of usersSnapshot.docs) {
             const userData = userDoc.data();
@@ -613,14 +619,14 @@ export default function PlantDetailPage() {
             const recipientName = userData.displayName || 'User';
             if (recipientEmail && typeof recipientEmail === 'string' && recipientEmail.trim() !== '') {
                 const templateParams = {
-                    plant_name: plantDetails.name, alert_type: alertType, current_value: String(currentValue),
-                    threshold_value: String(thresholdValue ?? 'N/A'), email: recipientEmail, // Ensure 'email' matches your EmailJS template
+                    plant_name: plantDetails.name, alert_type: descriptiveAlertType, current_value: String(currentValue),
+                    threshold_value: String(thresholdValue ?? 'N/A'), email: recipientEmail,
                     user_name: recipientName, plant_link: `${window.location.origin}/plants/${plantId}`
                 };
                 console.log(`[EmailJS] Preparing to send to: ${recipientEmail} with params:`, JSON.stringify(templateParams));
                 try {
                     await emailjs.send(serviceId, templateId, templateParams, publicKey);
-                    console.log(`[EmailJS] Notification sent to ${recipientEmail} for ${alertType}`);
+                    console.log(`[EmailJS] Notification sent to ${recipientEmail} for ${descriptiveAlertType}`);
                     emailsSentCount++;
                 } catch (emailError: any) {
                     console.error(`[EmailJS] Failed to send to ${recipientEmail}:`, emailError.status, emailError.text);
@@ -633,9 +639,9 @@ export default function PlantDetailPage() {
         if (emailsSentCount > 0) {
             // @ts-ignore
             notificationCooldowns.current[cooldownKeyForPlantAlert] = now;
-            console.log(`[EmailJS] Attempted to send ${emailsSentCount} emails for ${alertType} on plant ${plantId}.`);
+            console.log(`[EmailJS] Attempted to send ${emailsSentCount} emails for ${descriptiveAlertType} on plant ${plantId}.`);
         } else {
-            console.warn(`[EmailJS] No emails sent for ${alertType} on plant ${plantId}.`);
+            console.warn(`[EmailJS] No emails sent for ${descriptiveAlertType} on plant ${plantId}.`);
             if (!emailError) { setEmailError("No valid recipients found or all email attempts failed."); }
         }
     } catch (fetchUsersError: any) {
@@ -871,10 +877,10 @@ export default function PlantDetailPage() {
                                     <div>
                                         <p className="text-sm font-medium text-gray-700 mb-1">Environment:</p>
                                         <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-center text-xs">
-                                            {environmentStatus.temp && <div className={`p-1.5 rounded ${environmentStatus.temp.color.replace('text-', 'bg-').replace('-600', '-100')}`}> <p className="font-semibold">Temp</p> <p className={environmentStatus.temp.color}>{environmentStatus.temp.status}</p> </div>}
-                                            {environmentStatus.humidity && <div className={`p-1.5 rounded ${environmentStatus.humidity.color.replace('text-', 'bg-').replace('-600', '-100')}`}> <p className="font-semibold">Humidity</p> <p className={environmentStatus.humidity.color}>{environmentStatus.humidity.status}</p> </div>}
-                                            {environmentStatus.ph && <div className={`p-1.5 rounded ${environmentStatus.ph.color.replace('text-', 'bg-').replace('-600', '-100')}`}> <p className="font-semibold">pH</p> <p className={environmentStatus.ph.color}>{environmentStatus.ph.status}</p> </div>}
-                                            {environmentStatus.ec && <div className={`p-1.5 rounded ${environmentStatus.ec.color.replace('text-', 'bg-').replace('-600', '-100')}`}> <p className="font-semibold">EC</p> <p className={environmentStatus.ec.color}>{environmentStatus.ec.status}</p> </div>}
+                                            {environmentStatus.temp && <div className={`p-1.5 rounded ${environmentStatus.temp.color.replace('text-', 'bg-').replace('-600', '-100')}`}> <p className="font-semibold text-gray-900">Temp</p> <p className={environmentStatus.temp.color}>{environmentStatus.temp.status}</p> </div>}
+                                            {environmentStatus.humidity && <div className={`p-1.5 rounded ${environmentStatus.humidity.color.replace('text-', 'bg-').replace('-600', '-100')}`}> <p className="font-semibold text-gray-900">Humidity</p> <p className={environmentStatus.humidity.color}>{environmentStatus.humidity.status}</p> </div>}
+                                            {environmentStatus.ph && <div className={`p-1.5 rounded ${environmentStatus.ph.color.replace('text-', 'bg-').replace('-600', '-100')}`}> <p className="font-semibold text-gray-900">pH</p> <p className={environmentStatus.ph.color}>{environmentStatus.ph.status}</p> </div>}
+                                            {environmentStatus.ec && <div className={`p-1.5 rounded ${environmentStatus.ec.color.replace('text-', 'bg-').replace('-600', '-100')}`}> <p className="font-semibold text-gray-900">EC</p> <p className={environmentStatus.ec.color}>{environmentStatus.ec.status}</p> </div>}
                                         </div>
                                         {environmentStatus.temp?.status === 'Low' && <p className="text-xs text-orange-600 mt-1 flex items-center"><AlertCircle size={14} className="mr-1"/> Consider increasing temperature.</p>}
                                         {environmentStatus.temp?.status === 'High' && <p className="text-xs text-red-600 mt-1 flex items-center"><AlertCircle size={14} className="mr-1"/> Consider decreasing temperature.</p>}
@@ -888,9 +894,9 @@ export default function PlantDetailPage() {
                                     <div>
                                         <p className="text-sm font-medium text-gray-700 mb-1 mt-3">Nutrients (NPK):</p>
                                         <div className="grid grid-cols-3 gap-2 text-center text-xs">
-                                            <div className={`p-1.5 rounded ${npkStatus.n.color.replace('text-', 'bg-').replace('-600', '-100')}`}> <p className="font-semibold">N</p> <p className={npkStatus.n.color}>{npkStatus.n.status}</p> </div>
-                                            <div className={`p-1.5 rounded ${npkStatus.p.color.replace('text-', 'bg-').replace('-600', '-100')}`}> <p className="font-semibold">P</p> <p className={npkStatus.p.color}>{npkStatus.p.status}</p> </div>
-                                            <div className={`p-1.5 rounded ${npkStatus.k.color.replace('text-', 'bg-').replace('-600', '-100')}`}> <p className="font-semibold">K</p> <p className={npkStatus.k.color}>{npkStatus.k.status}</p> </div>
+                                            <div className={`p-1.5 rounded ${npkStatus.n.color.replace('text-', 'bg-').replace('-600', '-100')}`}> <p className="font-semibold text-gray-900">N</p> <p className={npkStatus.n.color}>{npkStatus.n.status}</p> </div>
+                                            <div className={`p-1.5 rounded ${npkStatus.p.color.replace('text-', 'bg-').replace('-600', '-100')}`}> <p className="font-semibold text-gray-900">P</p> <p className={npkStatus.p.color}>{npkStatus.p.status}</p> </div>
+                                            <div className={`p-1.5 rounded ${npkStatus.k.color.replace('text-', 'bg-').replace('-600', '-100')}`}> <p className="font-semibold text-gray-900">K</p> <p className={npkStatus.k.color}>{npkStatus.k.status}</p> </div>
                                         </div>
                                     </div>
                                     <div className="mt-3">

@@ -2,189 +2,228 @@
 
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { Leaf, ImageOff, CalendarDays, MapPin, Tag, Loader2, AlertTriangle } from 'lucide-react';
-import { ref as rtdbRef, get as getRTDB } from "firebase/database"; // Correct import for RTDB get
-import { database } from '@/app/lib/firebase/config'; // Your Firebase config that exports RTDB instance
-import { Timestamp } from 'firebase/firestore'; // Import Timestamp if needed for datePlanted, though Date is used here
+import { ImageOff, Leaf, Loader2, Thermometer, Droplets, TestTube2, Zap, Atom, CalendarDays, MapPin, Tag, AlertTriangle } from 'lucide-react';
 
-// Interface for Plant data passed to the card
-// Ensure this matches the structure of the plant objects you pass from PlantsPage
+import { ref as rtdbRef, get as getRTDB } from "firebase/database";
+import { database, firestore } from '@/app/lib/firebase/config'; // Assuming firestore is also exported
+import { collection, query, where, orderBy, limit, getDocs, Timestamp } from 'firebase/firestore';
+
+// Interface for the individual sensor reading fetched by the card
+interface LatestSensorReading {
+  timestamp?: Date;
+  temp?: number;
+  humidity?: number;
+  ph?: number;
+  ec?: number;
+  nitrogen?: number;
+  phosphorus?: number;
+  potassium?: number;
+}
+
+// Plant prop structure
 interface Plant {
-  id: string; // Firestore document ID
+  id: string; // Firestore document ID of the plant
   name: string;
-  type: string; // e.g., "Cabbage", "Tomato"
-  imageUrl?: string | null; // Expected to be an RTDB path like "plantImages/Cabbage" or a full HTTPS URL
-  datePlanted: Date; // Should be a JavaScript Date object
-  status: string;
+  imageUrl?: string | null;
+  type?: string;
+  status?: string;
+  datePlanted: Date; // Ensure this is a Date object when passed
   locationZone?: string;
-  ownerUid: string; // Not directly displayed but good for interface consistency
-  // Add other fields if your PlantCard displays them
-  lastSensorReading?: { // From your previous PlantCard version
-    timestamp?: Date;
-    temp?: number;
-    humidity?: number;
-    ph?: number;
-    ec?: number;
-    nitrogen?: number;
-    phosphorus?: number;
-    potassium?: number;
-  } | null;
+  ownerUid: string;
 }
 
 interface PlantCardProps {
   plant: Plant;
 }
 
-// Placeholder URLs for different image states
 const DEFAULT_PLANT_IMAGE_PLACEHOLDER = 'https://placehold.co/400x400/e9e9e9/a9a9a9?text=No+Image';
 const ERROR_PLANT_IMAGE_PLACEHOLDER = 'https://placehold.co/400x400/f87171/7f1d1d?text=Load+Error';
 
 const PlantCard: React.FC<PlantCardProps> = ({ plant }) => {
-  const [displayImageUrl, setDisplayImageUrl] = useState<string | null>(null);
-  const [isImageLoading, setIsImageLoading] = useState<boolean>(true);
-  const [imageError, setImageError] = useState<string | null>(null); // To store specific error messages
+  const [imageData, setImageData] = useState<string | null>(null);
+  const [isImageLoading, setIsImageLoading] = useState<boolean>(false);
+  const [imageFetchError, setImageFetchError] = useState<string | null>(null);
 
+  const [latestSensorData, setLatestSensorData] = useState<LatestSensorReading | null>(null);
+  const [isSensorDataLoading, setIsSensorDataLoading] = useState<boolean>(true);
+  const [sensorDataError, setSensorDataError] = useState<string | null>(null);
+
+  // Effect to fetch image from RTDB or use direct URL
   useEffect(() => {
-    let isMounted = true; // Flag to prevent state updates on unmounted component
-    setIsImageLoading(true);
-    setImageError(null);
-    setDisplayImageUrl(null); // Reset image URL on plant prop change
-
-    // console.log(`[PlantCard: ${plant.name}] Received imageUrl from prop: ${plant.imageUrl}`);
-
+    let isMounted = true;
     if (plant.imageUrl) {
-      if (plant.imageUrl.startsWith('plantImages/')) { // Indicates an RTDB path
+        setIsImageLoading(true);
+    } else {
+        setIsImageLoading(false);
+        setImageData(DEFAULT_PLANT_IMAGE_PLACEHOLDER);
+        return;
+    }
+    setImageFetchError(null);
+
+    if (plant.imageUrl.startsWith('plantImages/')) {
         if (!database) {
           console.error(`[PlantCard: ${plant.name}] Firebase Realtime Database is not initialized.`);
           if (isMounted) {
-            setDisplayImageUrl(ERROR_PLANT_IMAGE_PLACEHOLDER);
-            setImageError("RTDB service not available.");
+            setImageData(ERROR_PLANT_IMAGE_PLACEHOLDER);
+            setImageFetchError("RTDB service unavailable.");
             setIsImageLoading(false);
           }
           return;
         }
         const imagePath = plant.imageUrl;
-        // console.log(`[PlantCard: ${plant.name}] Attempting to fetch from RTDB path: ${imagePath}`);
         const imageRefRTDB = rtdbRef(database, imagePath);
-
         getRTDB(imageRefRTDB)
           .then((snapshot) => {
-            if (!isMounted) return; // Don't update state if component unmounted
+            if (!isMounted) return;
             if (snapshot.exists()) {
               const base64Data = snapshot.val();
               if (typeof base64Data === 'string' && base64Data.startsWith('data:image/')) {
-                // console.log(`[PlantCard: ${plant.name}] Successfully fetched base64 data from RTDB.`);
-                setDisplayImageUrl(base64Data);
+                setImageData(base64Data);
               } else {
-                console.warn(`[PlantCard: ${plant.name}] Invalid or non-base64 data at RTDB path: ${imagePath}. Data type: ${typeof base64Data}`);
-                setDisplayImageUrl(DEFAULT_PLANT_IMAGE_PLACEHOLDER); // Fallback if data is not a valid base64 string
-                setImageError("Invalid image format in RTDB.");
+                setImageData(DEFAULT_PLANT_IMAGE_PLACEHOLDER);
+                setImageFetchError("Invalid image format in RTDB.");
               }
             } else {
-              console.warn(`[PlantCard: ${plant.name}] No image data found at RTDB path: ${imagePath}. The path exists in Firestore but not in RTDB.`);
-              setDisplayImageUrl(DEFAULT_PLANT_IMAGE_PLACEHOLDER); // Path exists in Firestore, but no data in RTDB
-              setImageError("Image data not found in RTDB.");
+              setImageData(DEFAULT_PLANT_IMAGE_PLACEHOLDER);
+              setImageFetchError("Image not found in RTDB.");
             }
           })
           .catch((error) => {
             if (!isMounted) return;
-            console.error(`[PlantCard: ${plant.name}] Error fetching image from RTDB for path ${imagePath}:`, error);
-            setDisplayImageUrl(ERROR_PLANT_IMAGE_PLACEHOLDER);
-            setImageError(error.code === 'PERMISSION_DENIED' ? "RTDB Permission Denied." : `RTDB Fetch Error.`);
+            console.error(`[PlantCard: ${plant.name}] Error fetching image from RTDB:`, error);
+            setImageData(ERROR_PLANT_IMAGE_PLACEHOLDER);
+            setImageFetchError(error.code === 'PERMISSION_DENIED' ? "RTDB Permission Denied." : "RTDB Fetch Error.");
           })
           .finally(() => {
             if (isMounted) setIsImageLoading(false);
           });
-      } else if (plant.imageUrl.startsWith('http://') || plant.imageUrl.startsWith('https://')) {
-        // console.log(`[PlantCard: ${plant.name}] Using direct HTTPS URL: ${plant.imageUrl}`);
-        setDisplayImageUrl(plant.imageUrl);
-        setIsImageLoading(false); // Browser handles loading/errors for direct URLs
-      } else { // Invalid or unexpected imageUrl format stored in Firestore
-        console.warn(`[PlantCard: ${plant.name}] Invalid imageUrl format stored in Firestore: ${plant.imageUrl}`);
-        setDisplayImageUrl(DEFAULT_PLANT_IMAGE_PLACEHOLDER);
-        setImageError("Invalid image URL format.");
+      } else if (plant.imageUrl.startsWith('http')) {
+        setImageData(plant.imageUrl);
+        setIsImageLoading(false);
+      } else {
+        setImageData(DEFAULT_PLANT_IMAGE_PLACEHOLDER);
+        setImageFetchError("Invalid image URL format.");
         setIsImageLoading(false);
       }
-    } else { // No imageUrl provided in Firestore document for this plant
-      // console.log(`[PlantCard: ${plant.name}] No imageUrl provided in Firestore document.`);
-      setDisplayImageUrl(DEFAULT_PLANT_IMAGE_PLACEHOLDER);
-      setIsImageLoading(false);
+    return () => { isMounted = false; };
+  }, [plant.imageUrl, plant.name]);
+
+  // Effect to fetch the latest sensor reading for this specific plant
+  useEffect(() => {
+    let isMounted = true;
+    if (plant.id && firestore) {
+      setIsSensorDataLoading(true);
+      setSensorDataError(null);
+      setLatestSensorData(null);
+
+      const fetchLatestReading = async () => {
+        try {
+          const readingsRef = collection(firestore, 'sensorReadings');
+          const q = query(
+            readingsRef,
+            where("plantId", "==", plant.id),
+            orderBy("timestamp", "desc"),
+            limit(1)
+          );
+          const snapshot = await getDocs(q);
+          if (!isMounted) return;
+
+          if (!snapshot.empty) {
+            const docData = snapshot.docs[0].data();
+            setLatestSensorData({
+              timestamp: docData.timestamp instanceof Timestamp ? docData.timestamp.toDate() : new Date(docData.timestamp),
+              temp: docData.temperature,
+              humidity: docData.humidity,
+              ph: docData.ph,
+              ec: docData.ec,
+              nitrogen: docData.nitrogen,
+              phosphorus: docData.phosphorus,
+              potassium: docData.potassium,
+            });
+          } else {
+            setLatestSensorData(null);
+          }
+        } catch (error: any) {
+          if (!isMounted) return;
+          console.error(`[PlantCard: ${plant.name}] Error fetching latest sensor reading:`, error);
+          setSensorDataError("Sensor data unavailable.");
+        } finally {
+          if (isMounted) setIsSensorDataLoading(false);
+        }
+      };
+      fetchLatestReading();
+    } else {
+        setIsSensorDataLoading(false);
     }
+    return () => { isMounted = false; };
+  }, [plant.id, plant.name]);
 
-    // Cleanup function to set isMounted to false when the component unmounts
-    return () => {
-      isMounted = false;
-    };
-  }, [plant.imageUrl, plant.name]); // Re-run effect if plant.imageUrl or plant.name changes
-
-  // This handler is for the <img> tag's onError event
   const handleImageElementError = () => {
-    // This triggers if the src (even if it's a valid-looking base64 or https URL) fails to render as an image
-    if (displayImageUrl !== ERROR_PLANT_IMAGE_PLACEHOLDER) { // Avoid infinite loop if error placeholder itself fails
-        console.warn(`[PlantCard: ${plant.name}] HTML <img> tag failed to load src. Current displayImageUrl (first 60 chars): ${displayImageUrl?.substring(0, 60)}...`);
-        setDisplayImageUrl(ERROR_PLANT_IMAGE_PLACEHOLDER);
-        setImageError("Browser couldn't render image."); // More specific error
+    if (imageData !== ERROR_PLANT_IMAGE_PLACEHOLDER) {
+        setImageData(ERROR_PLANT_IMAGE_PLACEHOLDER);
+        setImageFetchError("Browser couldn't render image.");
     }
-    setIsImageLoading(false); // Ensure loading stops
+    setIsImageLoading(false);
   };
 
-  const formatDate = (date: Date): string => {
+  const formatDate = (date: Date | undefined): string => {
     if (!date || !(date instanceof Date) || isNaN(date.getTime())) return 'N/A';
     return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
   };
 
-  // Sensor data display (from your previous PlantCard version)
-  const lastReading = plant.lastSensorReading;
   const formatSensorValue = (value: number | undefined | null, fixedDigits: number = 1): string => {
-    return (typeof value === 'number') ? value.toFixed(fixedDigits) : '-'; // Use '-' for N/A for brevity
+    return (typeof value === 'number') ? value.toFixed(fixedDigits) : '-';
   }
 
   return (
     <Link href={`/plants/${plant.id}`} legacyBehavior>
       <a className="block bg-white rounded-lg shadow-md hover:shadow-xl transition-shadow duration-300 overflow-hidden group aspect-[4/5] sm:aspect-square flex flex-col">
+        {/* Image Section - Remains fixed height */}
         <div className="w-full h-32 sm:h-40 bg-gray-200 flex items-center justify-center overflow-hidden relative flex-shrink-0">
           {isImageLoading ? (
             <div className="flex flex-col items-center justify-center text-gray-500">
               <Loader2 className="w-8 h-8 animate-spin" />
               <span className="text-xs mt-1">Loading Image...</span>
             </div>
-          ) : imageError && displayImageUrl === ERROR_PLANT_IMAGE_PLACEHOLDER ? (
+          ) : imageFetchError ? (
             <div className="flex flex-col items-center justify-center text-red-500 p-2 text-center">
               <AlertTriangle className="w-8 h-8 mb-1" />
-              <span className="text-xs">{imageError}</span>
+              <span className="text-xs">{imageFetchError}</span>
             </div>
-          ) : displayImageUrl === DEFAULT_PLANT_IMAGE_PLACEHOLDER && !imageError ? (
-             <div className="flex flex-col items-center justify-center text-gray-400 p-2 text-center">
-                <ImageOff className="w-10 h-10 mb-1" />
-                <span className="text-xs">No Image Provided</span>
-            </div>
-          ) : displayImageUrl ? (
+          ) : imageData ? (
             <img
-              src={displayImageUrl}
+              src={imageData}
               alt={plant.name}
               className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
-              onError={handleImageElementError} // Catch errors from the img tag itself
+              onError={handleImageElementError}
               loading="lazy"
             />
           ) : (
-            // Final fallback if displayImageUrl is null after all checks (should ideally not be reached often)
             <div className="flex flex-col items-center justify-center text-gray-400 p-2 text-center">
                 <ImageOff className="w-10 h-10 mb-1" />
-                <span className="text-xs">Image Unavailable</span>
+                <span className="text-xs">No Image</span>
             </div>
           )}
         </div>
-        <div className="p-3 sm:p-4 flex-grow flex flex-col justify-between">
-          <div>
-            <h3 className="font-semibold text-gray-800 truncate text-base group-hover:text-green-700" title={plant.name}>
-              {plant.name}
-            </h3>
+
+        {/* Content Section - This is the main content area below the image */}
+        <div className="p-3 sm:p-4 flex flex-col flex-grow overflow-hidden"> {/* Added overflow-hidden */}
+          {/* Plant Name - Fixed at the top of this content section */}
+          <h3 className="font-semibold text-gray-800 truncate text-base group-hover:text-green-700 mb-1 flex-shrink-0" title={plant.name}>
+            {plant.name}
+          </h3>
+
+          {/* Scrollable container for ALL other details below the name */}
+          <div className="flex-grow overflow-y-auto scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-gray-100 pr-1 pb-1"> {/* Added pb-1 for bottom scrollbar spacing */}
+            {/* Plant Type */}
             {plant.type && (
               <p className="text-xs text-gray-500 mb-1 uppercase tracking-wider flex items-center">
                 <Leaf size={12} className="mr-1.5 text-green-500 flex-shrink-0" /> {plant.type}
               </p>
             )}
-            <div className="text-xs text-gray-600 space-y-0.5 mt-1">
+
+            {/* Other Plant Details (date, status, zone) */}
+            <div className="text-xs text-gray-600 space-y-0.5 mt-1 mb-2">
                 <p className="flex items-center">
                     <CalendarDays size={12} className="mr-1.5 text-gray-400 flex-shrink-0"/>
                     Planted: {formatDate(plant.datePlanted)}
@@ -202,26 +241,50 @@ const PlantCard: React.FC<PlantCardProps> = ({ plant }) => {
                     </p>
                 )}
             </div>
-          </div>
 
-          {/* Sensor Data Display */}
-          {lastReading ? (
-            <div className="mt-2 pt-2 border-t border-gray-100 text-xs text-gray-600 space-y-0.5">
-                <div className="flex items-center justify-between">
-                    <span className="flex items-center"><Thermometer size={12} className="mr-1 text-orange-400"/>Temp:</span>
-                    <span className="font-medium">{formatSensorValue(lastReading.temp, 1)}°C</span>
-                </div>
-                <div className="flex items-center justify-between">
-                    <span className="flex items-center"><Droplets size={12} className="mr-1 text-blue-400"/>Humidity:</span>
-                    <span className="font-medium">{formatSensorValue(lastReading.humidity, 0)}%</span>
-                </div>
-                {/* Add other sensor readings similarly if they exist */}
+            {/* Sensor Data Display - Removed max-h from here */}
+            <div className="mt-2 pt-2 border-t border-gray-200 text-xs text-gray-600 space-y-0.5">
+              {isSensorDataLoading ? (
+                  <div className="flex items-center text-gray-400 py-2">
+                      <Loader2 size={12} className="animate-spin mr-1.5"/> Loading sensor data...
+                  </div>
+              ) : sensorDataError ? (
+                  <div className="flex items-center text-red-500 py-2">
+                      <AlertTriangle size={12} className="mr-1.5"/> {sensorDataError}
+                  </div>
+              ) : latestSensorData ? (
+                <>
+                  <div className="flex items-center justify-between">
+                      <span className="flex items-center"><Thermometer size={12} className="mr-1 text-orange-400"/>Temp:</span>
+                      <span className="font-medium">{formatSensorValue(latestSensorData.temp, 1)}°C</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                      <span className="flex items-center"><Droplets size={12} className="mr-1 text-blue-400"/>Humidity:</span>
+                      <span className="font-medium">{formatSensorValue(latestSensorData.humidity, 0)}%</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                      <span className="flex items-center"><TestTube2 size={12} className="mr-1 text-purple-500"/>pH:</span>
+                      <span className="font-medium">{formatSensorValue(latestSensorData.ph, 1)}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                      <span className="flex items-center"><Zap size={12} className="mr-1 text-yellow-500"/>EC:</span>
+                      <span className="font-medium">{formatSensorValue(latestSensorData.ec, 1)} µS/cm</span>
+                  </div>
+                  <div className="flex items-center justify-between pt-1 mt-1 border-t border-dashed">
+                      <span className="flex items-center font-medium"><Atom size={12} className="mr-1 text-gray-500"/>NPK:</span>
+                      <span className="space-x-1.5">
+                          <span className="text-green-700">N:{formatSensorValue(latestSensorData.nitrogen, 0)}</span>
+                          <span className="text-blue-700">P:{formatSensorValue(latestSensorData.phosphorus, 0)}</span>
+                          <span className="text-orange-700">K:{formatSensorValue(latestSensorData.potassium, 0)}</span>
+                      </span>
+                  </div>
+                  {latestSensorData.timestamp && <p className="text-right text-gray-400 text-[10px] mt-0.5">As of: {latestSensorData.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>}
+                </>
+              ) : (
+                <p className="text-gray-400 py-2">No recent sensor data.</p>
+              )}
             </div>
-          ) : (
-            <div className="mt-2 pt-2 border-t border-gray-100 text-xs text-gray-400">
-              No recent sensor data.
-            </div>
-          )}
+          </div>
         </div>
       </a>
     </Link>
