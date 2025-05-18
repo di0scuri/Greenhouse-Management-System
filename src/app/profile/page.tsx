@@ -168,9 +168,9 @@ export default function ProfilePage() {
                             <div className="bg-white p-6 md:p-8 rounded-lg shadow">
                                 <h2 className="text-lg font-medium text-gray-900 border-b pb-3 mb-6 flex items-center"> <HardHat size={18} className="mr-2 text-orange-600" /> Admin Settings </h2>
                                 {settingsError && <div role="alert" className="mb-4 text-sm text-red-700 bg-red-100 p-3 rounded border border-red-200"><AlertTriangle size={16} className="inline mr-1"/> {settingsError}</div>}
-                                <div className="mb-4 p-3 border rounded-md bg-gray-50 text-sm">
-                                    <p>Current Dimensions: <span className="font-medium">{lengthM || 'Not Set'}</span>m L x <span className="font-medium">{widthM || 'Not Set'}</span>m W</p>
-                                    <p>Calculated Usable Area: <span className="font-medium">{(Number(lengthM) * Number(widthM)).toFixed(2) || '0.00'} sq m</span></p>
+                                <div className="mb-4 p-3 border rounded-md bg-gray-50 text-sm text-gray-900">
+                                    <p>Current Dimensions: <span className="font-medium text-gray-900">{lengthM || 'Not Set'}</span>m L x <span className="font-medium">{widthM || 'Not Set'}</span>m W</p>
+                                    <p>Calculated Usable Area: <span className="font-medium text-gray-900">{(Number(lengthM) * Number(widthM)).toFixed(2) || '0.00'} sq m</span></p>
                                 </div>
                                 <button onClick={handleOpenLandSizeModal} className="inline-flex items-center px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"> <SettingsIcon size={16} className="mr-2" /> Set Greenhouse Dimensions </button>
                                 {saveError && <div role="alert" className="mt-4 text-sm text-red-700 bg-red-100 p-3 rounded border border-red-300"><AlertTriangle size={16} className="inline mr-1"/> {saveError}</div>}

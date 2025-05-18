@@ -384,7 +384,7 @@ export default function DashboardPage() {
                       </button>
                       <div className="relative">
                           <span className="absolute inset-y-0 left-0 flex items-center pl-3"><Search className="h-5 w-5 text-gray-400" aria-hidden="true" /></span>
-                          <input type="text" placeholder="Search dashboard..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-md leading-5 bg-white placeholder-gray-500 focus:outline-none focus:placeholder-gray-400 focus:ring-1 focus:ring-green-500 focus:border-green-500 sm:text-sm" />
+                          <input type="text" placeholder="Search dashboard..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="block w-full pl-10 pr-3 py-2 border border-gray-300 text-gray-600 rounded-md leading-5 bg-white placeholder-gray-500 focus:outline-none focus:placeholder-gray-400 focus:ring-1 focus:ring-green-500 focus:border-green-500 sm:text-sm" />
                       </div>
                   </div>
               </div>
@@ -402,7 +402,7 @@ export default function DashboardPage() {
                             name="financialPeriod"
                             value={selectedFinancialPeriod}
                             onChange={(e) => setSelectedFinancialPeriod(e.target.value as FinancialPeriod)}
-                            className="block w-full sm:w-56 pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-green-500 focus:border-green-500 sm:text-sm rounded-md shadow-sm appearance-none bg-white"
+                            className="block w-full sm:w-56 pl-3 pr-10 py-2 text-base border-gray-300 text-gray-600 focus:outline-none focus:ring-green-500 focus:border-green-500 sm:text-sm rounded-md shadow-sm appearance-none bg-white"
                         >
                             <option value="today">Today</option>
                             <option value="this_week">This Week</option>

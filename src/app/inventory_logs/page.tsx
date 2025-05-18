@@ -72,7 +72,6 @@ interface PlantForDropdown {
 }
 
 
-// Helper Functions
 const formatCurrency = (value: number): string => {
     if (value === 0) return '-';
     return new Intl.NumberFormat('en-PH', {
