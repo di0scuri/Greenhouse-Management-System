@@ -1,60 +1,56 @@
 'use client';
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import Link from 'next/link'; // Keep Link if PlantCard uses it
+import Link from 'next/link'; 
 import {
   collection, getDocs, query, where, orderBy, Timestamp,
   doc, runTransaction, serverTimestamp, limit, increment, addDoc, getDoc, updateDoc
 } from 'firebase/firestore';
-// database import is needed for RTDB interactions if you were to write image data,
-// but for this setup, we're only storing the path.
-// It's good to keep if PlantCard fetches from RTDB.
 import { firestore, auth, database } from '@/app/lib/firebase/config';
 import { useAuthState } from 'react-firebase-hooks/auth';
 
-import Sidebar from '@/components/Sidebar'; // Adjust path
-import PlantCard from '@/components/PlantCard'; // Adjust path, ensure it handles RTDB paths
-import LoadingSpinner from '@/components/LoadingSpinner'; // Adjust path
-import AddPlantModal, { NewPlantData } from '@/components/AddPlantModal'; // Adjust path
+import Sidebar from '@/components/Sidebar'; 
+import PlantCard from '@/components/PlantCard'; 
+import LoadingSpinner from '@/components/LoadingSpinner'; 
+import AddPlantModal, { NewPlantData } from '@/components/AddPlantModal'; 
 import { Loader2, AlertTriangle, Leaf, Inbox, Menu, X, Search, PlusCircle, Plus } from 'lucide-react';
 
 // --- Interfaces ---
 interface Plant {
   id: string;
   name: string;
-  type: string; // e.g., "Cabbage"
-  imageUrl?: string | null; // Will store "plantImages/Cabbage" or a full https URL
+  type: string; 
+  imageUrl?: string | null; 
   datePlanted: Date;
   status: string;
   locationZone?: string;
-  ownerUid: string;
+  ownerUid: string; // Still stored to know who created it
   seedId?: string;
   initialSeedQuantity?: number;
-  areaOccupiedSqM?: number; // Area this specific batch of plants takes up
+  areaOccupiedSqM?: number; 
 }
 
 interface PlantLifecycle {
-  name: string; // This should match the plant type, e.g., "Cabbage"
+  name: string; 
   fertilizeDays: number[];
   maturityDays: number;
   harvestDays: number;
-  spacingCm: number; // Spacing between plants in centimeters
+  spacingCm: number; 
   stages: Array<{ name: string; startDay: number; description?: string; }>;
 }
 
-// Log entry data structure when writing to Firestore
 interface LogEntryData {
-    itemId: string; // ID of the seed used
-    itemName: string; // Name of the seed used
-    timestamp: any; // serverTimestamp()
+    itemId: string; 
+    itemName: string; 
+    timestamp: any; 
     type: 'Purchase' | 'Seed Planted' | 'Fertilizer Used' | 'Material Used' | 'Sale' | 'Adjustment' | 'Initial Stock';
-    quantityChange: number; // e.g., -10 for 10 seeds used
-    costOrValuePerUnit: number; // Cost of one seed unit
+    quantityChange: number; 
+    costOrValuePerUnit: number; 
     notes?: string;
-    userId?: string; // User who performed action
-    plantId?: string; // Link log to the newly created plant
-    unit?: string; // Unit of the seed (e.g., 'seeds', 'g')
+    userId?: string; 
+    plantId?: string; 
+    unit?: string; 
 }
 
 const addDays = (date: Date, days: number): Date => {
@@ -75,10 +71,8 @@ export default function PlantsPage() {
   const [error, setError] = useState<string | null>(null);
 
   const [isAddPlantModalOpen, setIsAddPlantModalOpen] = useState(false);
-  // usableAreaSqM will be fetched from user's settings
-  const [usableAreaSqM, setUsableAreaSqM] = useState<number>(0); // Initialize to 0
+  const [usableAreaSqM, setUsableAreaSqM] = useState<number>(0); 
   const [isAreaLoading, setIsAreaLoading] = useState<boolean>(true);
-  // allLifecycleData will store configurations for all plant types, keyed by plant type name
   const [allLifecycleData, setAllLifecycleData] = useState<Record<string, PlantLifecycle>>({});
   const [isLifecycleLoading, setIsLifecycleLoading] = useState<boolean>(true);
   const [lifecycleError, setLifecycleError] = useState<string | null>(null);
@@ -87,11 +81,11 @@ export default function PlantsPage() {
     if (!loadingAuth && !user && !errorAuth) { router.push('/login'); }
     if (!loadingAuth && errorAuth) {
         console.error("PlantsPage: Authentication Error", errorAuth);
-        router.push('/login'); // Redirect on auth error
+        router.push('/login'); 
     }
   }, [user, loadingAuth, errorAuth, router]);
 
-  // Fetch User Settings (for usablePlantingAreaSqM)
+  // Fetch User Settings (for usablePlantingAreaSqM) - This remains user-specific
   useEffect(() => {
       if (user && firestore) {
           const fetchUserData = async () => {
@@ -101,35 +95,34 @@ export default function PlantsPage() {
                   const docSnap = await getDoc(userDocRef);
                   if (docSnap.exists()) {
                       const userData = docSnap.data();
-                      // Ensure the field name matches exactly what's in your 'users' document
                       const area = userData.usablePlantingAreaSqM;
                       if (typeof area === 'number' && area >= 0) {
-                        setUsableAreaSqM(area);
-                        console.log("Fetched usable area:", area);
+                          setUsableAreaSqM(area);
+                          console.log("Fetched usable area:", area);
                       } else {
-                        console.warn("Usable area (usablePlantingAreaSqM) not found or invalid in user profile, using default 20sqm.");
-                        setUsableAreaSqM(20); // Default if not set or invalid
+                          console.warn("Usable area (usablePlantingAreaSqM) not found or invalid in user profile, using default 20sqm.");
+                          setUsableAreaSqM(20); 
                       }
                   } else {
-                    console.warn("User profile document not found, using default area (20sqm). Consider creating user profile with 'usablePlantingAreaSqM' field.");
-                    setUsableAreaSqM(20); // Default if no profile
+                      console.warn("User profile document not found, using default area (20sqm). Consider creating user profile with 'usablePlantingAreaSqM' field.");
+                      setUsableAreaSqM(20); 
                   }
               } catch (error) {
-                console.error("Error fetching user area:", error);
-                setUsableAreaSqM(20); // Fallback on error
+                  console.error("Error fetching user area:", error);
+                  setUsableAreaSqM(20); 
               }
               finally { setIsAreaLoading(false); }
           };
           fetchUserData();
       } else {
         setIsAreaLoading(false);
-        if(!user && !loadingAuth) setUsableAreaSqM(0); // Reset if no user and auth check is done
+        if(!user && !loadingAuth) setUsableAreaSqM(0); 
       }
-  }, [user, loadingAuth]); // Rerun if user changes
+  }, [user, loadingAuth, firestore]); // Added firestore dependency
 
   // Fetch All Plant Lifecycle Data from 'plantTypes' collection
   useEffect(() => {
-      if (user && firestore) { // Ensure user is available for potential future user-specific lifecycle data
+      if (user && firestore && !loadingAuth) { // Ensure user and firestore are ready
           const fetchAllLifecycleData = async () => {
               setIsLifecycleLoading(true); setLifecycleError(null);
               const typesCollectionRef = collection(firestore, 'plantTypes');
@@ -138,7 +131,6 @@ export default function PlantsPage() {
                   const querySnapshot = await getDocs(typesCollectionRef);
                   querySnapshot.forEach((docSnap) => {
                       const data = docSnap.data();
-                      // The document ID in 'plantTypes' should be the plant type name (e.g., "Cabbage")
                       const plantTypeName = docSnap.id;
                       if (plantTypeName && typeof data.spacingCm === 'number' && Array.isArray(data.fertilizeDays) && typeof data.maturityDays === 'number' && typeof data.harvestDays === 'number' && Array.isArray(data.stages)) {
                           fetchedData[plantTypeName] = { ...data, name: plantTypeName } as PlantLifecycle;
@@ -157,20 +149,27 @@ export default function PlantsPage() {
           fetchAllLifecycleData();
       } else {
         setIsLifecycleLoading(false);
-        if(!user && !loadingAuth) setAllLifecycleData({}); // Reset if no user
+        if(!user && !loadingAuth) setAllLifecycleData({}); 
       }
-  }, [user, loadingAuth]); // Rerun if user changes
+  }, [user, loadingAuth, firestore]); // Added firestore dependency
 
-  // Fetch Plants Data for the current user
+  // MODIFIED: Fetch Plants Data - Removed ownerUid filter
   useEffect(() => {
-    if (!loadingAuth && user && firestore) {
+    // Fetch plants if firestore is available and auth state is resolved.
+    // User object is not strictly needed for the query itself anymore, but keeping it in dependencies
+    // ensures this runs after auth check, and it's needed for adding new plants.
+    if (firestore && !loadingAuth) { 
       const fetchPlants = async () => {
         setIsLoading(true);
         setError(null);
+        console.log("[PlantsPage] Attempting to fetch ALL plants...");
         try {
           const plantsCollectionRef = collection(firestore, 'plants');
-          // Query plants owned by the current user, ordered by datePlanted descending
-          const q = query(plantsCollectionRef, where("ownerUid", "==", user.uid), orderBy("datePlanted", "desc"));
+          // REMOVED: where("ownerUid", "==", user.uid)
+          // Now fetches all plants, ordered by datePlanted.
+          // Ensure your Firestore rules allow this.
+          const q = query(plantsCollectionRef, orderBy("datePlanted", "desc"));
+          
           const querySnapshot = await getDocs(q);
           const fetchedPlants: Plant[] = [];
           querySnapshot.forEach((docSnap) => {
@@ -179,61 +178,60 @@ export default function PlantsPage() {
               id: docSnap.id,
               name: data.name || 'Unnamed Plant',
               type: data.type || 'Unknown',
-              imageUrl: data.imageUrl || null, // This will be the RTDB path (e.g., "plantImages/Cabbage")
+              imageUrl: data.imageUrl || null,
               datePlanted: data.datePlanted instanceof Timestamp ? data.datePlanted.toDate() : new Date(),
               status: data.status || 'Unknown',
               locationZone: data.locationZone,
-              ownerUid: data.ownerUid,
+              ownerUid: data.ownerUid, // Still useful to know who created it
               seedId: data.seedId,
               initialSeedQuantity: data.initialSeedQuantity,
-              areaOccupiedSqM: data.areaOccupiedSqM, // Fetch this if stored
+              areaOccupiedSqM: data.areaOccupiedSqM,
             });
           });
           setPlantsData(fetchedPlants);
+          console.log("[PlantsPage] Fetched", fetchedPlants.length, "plants.");
         } catch (err: any) {
           console.error("Error fetching plants:", err);
-          if (err.code === 'permission-denied') { setError(`Permission denied. Check Firestore rules for 'plants'.`); }
-          else if (err.code === 'unimplemented' || err.code === 'failed-precondition' || err.message.toLowerCase().includes('index')) {
-            setError(`Firestore query error. Ensure index exists for (ownerUid ASC, datePlanted DESC) in 'plants'.`);
-            console.error("Firestore Indexing Error: Create a composite index for 'plants' collection: (ownerUid ASC, datePlanted DESC).");
+          if (err.code === 'permission-denied') { 
+            setError(`Permission denied. Check Firestore rules for 'plants' to allow broader read access.`); 
+          } else if (err.code === 'unimplemented' || err.code === 'failed-precondition' || (err.message && err.message.toLowerCase().includes('index'))) {
+            setError(`Firestore query error. Ensure an index exists for (datePlanted DESC) in 'plants' collection if not automatically created.`);
+            console.error("Firestore Indexing Error: An index on 'datePlanted' (DESC) might be needed for the 'plants' collection.");
+          } else { 
+            setError("Failed to load plants data."); 
           }
-          else { setError("Failed to load plants data."); }
         } finally {
           setIsLoading(false);
         }
       };
       fetchPlants();
-    } else if (!loadingAuth && !user) { // If auth is resolved and no user
-        setIsLoading(false); setPlantsData([]);
-    } else if (!firestore && !loadingAuth) { // If firestore is not available
-        setIsLoading(false); setError("Firestore service not available.");
+    } else if (!loadingAuth && !firestore) { // If firestore is not available after auth check
+        setIsLoading(false); 
+        setError("Firestore service not available.");
     }
-  }, [user, loadingAuth]); // Re-fetch if user changes
+  }, [user, loadingAuth, firestore]); // firestore added as dependency
 
   // Calculate total occupied area by existing plants
   const occupiedAreaSqM = useMemo(() => {
       if (plantsData.length === 0) return 0;
       return plantsData.reduce((totalArea, plant) => {
-          // Prioritize areaOccupiedSqM stored on the plant document itself
           if (typeof plant.areaOccupiedSqM === 'number' && plant.areaOccupiedSqM > 0) {
               return totalArea + plant.areaOccupiedSqM;
           }
-          // Fallback to calculating from lifecycle data if not stored (less ideal for accuracy)
           const lifeCycle = allLifecycleData[plant.type];
           if (lifeCycle && typeof lifeCycle.spacingCm === 'number' && lifeCycle.spacingCm > 0) {
               const spacingM = lifeCycle.spacingCm / 100;
-              const plantCount = plant.initialSeedQuantity || 1; // Assume 1 if not specified
+              const plantCount = plant.initialSeedQuantity || 1; 
               return totalArea + (spacingM * spacingM * plantCount);
           }
-          // console.warn(`Could not determine area for plant: ${plant.name} (type: ${plant.type})`);
           return totalArea;
       }, 0);
   }, [plantsData, allLifecycleData]);
 
   const remainingAreaSqM = useMemo(() => {
-    if (isAreaLoading) return 0; // Or a loading state like 'Calculating...'
+    if (isAreaLoading) return 0; 
     const result = usableAreaSqM - occupiedAreaSqM;
-    return parseFloat(Math.max(0, result).toFixed(2)); // Ensure it's not negative
+    return parseFloat(Math.max(0, result).toFixed(2)); 
   }, [usableAreaSqM, occupiedAreaSqM, isAreaLoading]);
 
 
@@ -247,7 +245,6 @@ export default function PlantsPage() {
     );
   }, [plantsData, searchTerm]);
 
-  // Helper function to write to inventory_log (can be moved to a service file)
   const writeInventoryLog = async (logData: Omit<LogEntryData, 'userId' | 'timestamp'> & { timestamp?: any }) => {
     if (!user || !firestore) {
         console.error("Cannot write log: user or firestore not available.");
@@ -257,19 +254,18 @@ export default function PlantsPage() {
         const logCollectionRef = collection(firestore, 'inventory_log');
         await addDoc(logCollectionRef, {
             ...logData,
-            userId: user.uid,
+            userId: user.uid, // Logged-in user performed this action
             timestamp: logData.timestamp || serverTimestamp()
         });
         console.log("Inventory log entry written for:", logData.itemName);
     } catch (logError) {
         console.error("Error writing inventory log:", logError);
-        // Optionally re-throw or handle more gracefully
         throw new Error("Failed to write inventory log.");
     }
   };
 
   const handleAddPlantSubmit = async (newPlantData: NewPlantData) => {
-    if (!user || !firestore) { // Removed 'database' check as we only store RTDB path
+    if (!user || !firestore) { 
       throw new Error("Authentication or Database service is not ready.");
     }
     if (!newPlantData.selectedSeedId) { throw new Error("Seed selection is missing."); }
@@ -280,14 +276,13 @@ export default function PlantsPage() {
 
     const { plantName, plantType, selectedSeedId, quantity, imageUrl: rtdbImagePath, areaUsedSqM } = newPlantData;
 
-    // imageUrl from modal is now the direct RTDB path like "plantImages/Cabbage"
     if (!rtdbImagePath || !rtdbImagePath.startsWith('plantImages/')) {
         console.error("Invalid RTDB image path received from modal:", rtdbImagePath);
         throw new Error("Invalid image path format for RTDB.");
     }
 
     const plantsCollectionRef = collection(firestore, "plants");
-    const newPlantFirestoreRef = doc(plantsCollectionRef); // Generate ID for Firestore document
+    const newPlantFirestoreRef = doc(plantsCollectionRef); 
     const seedRef = doc(firestore, "inventory", selectedSeedId);
     const plantingDate = new Date();
 
@@ -305,28 +300,21 @@ export default function PlantsPage() {
         transaction.update(seedRef, { stock: increment(-quantity), lastUpdated: serverTimestamp() });
 
         const plantDataToSave = {
-          name: plantName,
-          type: plantType,
-          imageUrl: rtdbImagePath, // Save the RTDB path (e.g., "plantImages/Cabbage")
-          datePlanted: Timestamp.fromDate(plantingDate),
-          status: "Seeding", // Default status
-          locationZone: "Default Zone", // Or get from modal if you add this field
-          ownerUid: user.uid,
-          seedId: selectedSeedId,
-          initialSeedQuantity: quantity,
-          areaOccupiedSqM: areaUsedSqM || 0, // Store the calculated area
+          name: plantName, type: plantType, imageUrl: rtdbImagePath, 
+          datePlanted: Timestamp.fromDate(plantingDate), status: "Seeding", 
+          locationZone: "Default Zone", // Or get from modal
+          ownerUid: user.uid, // New plants are owned by the current user
+          seedId: selectedSeedId, initialSeedQuantity: quantity,
+          areaOccupiedSqM: areaUsedSqM || 0, 
         };
         transaction.set(newPlantFirestoreRef, plantDataToSave);
 
-        await writeInventoryLog({ // Await this to ensure log is written before UI update if critical
-          itemId: selectedSeedId,
-          itemName: seedData.name || 'Unknown Seed',
-          type: 'Seed Planted',
-          quantityChange: -quantity,
+        await writeInventoryLog({ 
+          itemId: selectedSeedId, itemName: seedData.name || 'Unknown Seed',
+          type: 'Seed Planted', quantityChange: -quantity,
           costOrValuePerUnit: Number(seedData.pricePerUnit) || 0,
           notes: `Planted ${quantity} of ${plantName} (Batch ID: ${newPlantFirestoreRef.id}).`,
-          plantId: newPlantFirestoreRef.id,
-          unit: seedData.unit || 'units'
+          plantId: newPlantFirestoreRef.id, unit: seedData.unit || 'units'
         });
       });
 
@@ -342,7 +330,7 @@ export default function PlantsPage() {
         }
         if (lifeCycle.stages && Array.isArray(lifeCycle.stages)) {
           for (const stage of lifeCycle.stages) {
-            if (stage.startDay >= 0) { // Allow stage at day 0
+            if (stage.startDay >= 0) { 
               const stageDate = addDays(plantingDate, stage.startDay);
               await addDoc(eventsCollectionRef, { ...baseEventData, timestamp: Timestamp.fromDate(stageDate), type: 'LIFECYCLE_STAGE', message: `Stage start: ${stage.name} for ${plantName}`, status: 'info' });
             }
@@ -368,14 +356,12 @@ export default function PlantsPage() {
             console.log(`Updated usable area in Firestore by -${areaUsedSqM.toFixed(2)} sqm.`);
         } catch (settingsError) {
             console.error("Failed to update usable area in Firestore:", settingsError);
-            // Consider how to handle this error - maybe alert the user
-            // The plant is added, but area update failed.
         }
       }
       setIsAddPlantModalOpen(false);
     } catch (error) {
       console.error("Add plant failed overall: ", error);
-      if (error instanceof Error) { throw error; } // Re-throw to be caught by modal's submitError
+      if (error instanceof Error) { throw error; } 
       else { throw new Error("An unknown error occurred while adding the plant batch."); }
     }
   };
@@ -424,14 +410,14 @@ export default function PlantsPage() {
             </div>
         </div>
      );
-  }
+   }
 
   return (
     <div className="flex h-screen bg-gray-100 font-sans">
       <Sidebar />
       <div className="flex-1 flex flex-col overflow-hidden">
         <header className="bg-green-50 relative z-10 border-b border-green-200">
-           <div className="max-w-full mx-auto px-4 sm:px-6 lg:px-8"> <div className="flex justify-between items-center h-16"> <div className="flex items-center"> <button onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)} className="lg:hidden mr-4 p-2 rounded-md text-gray-500 hover:text-gray-700 hover:bg-gray-100" aria-label="Open sidebar"> {isMobileMenuOpen ? <X size={24} /> : <Menu size={24} />} </button> <h1 className="text-xl font-semibold text-gray-800">Hello, {user.displayName?.split(' ')[0] || 'Farmer'}!</h1> </div> <div className="relative"> <span className="absolute inset-y-0 left-0 flex items-center pl-3"> <Search className="h-5 w-5 text-gray-400" aria-hidden="true" /> </span> <input type="text" placeholder="Search plants by name, type, zone..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-md leading-5 bg-white placeholder-gray-500 text-gray-400 focus:outline-none focus:placeholder-gray-400 focus:ring-1 focus:ring-green-500 focus:border-green-500 sm:text-sm" /> </div> </div> </div>
+           <div className="max-w-full mx-auto px-4 sm:px-6 lg:px-8"> <div className="flex justify-between items-center h-16"> <div className="flex items-center"> <button onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)} className="lg:hidden mr-4 p-2 rounded-md text-gray-500 hover:text-gray-700 hover:bg-gray-100" aria-label="Open sidebar"> {isMobileMenuOpen ? <X size={24} /> : <Menu size={24} />} </button> <h1 className="text-xl font-semibold text-gray-800">Hello, {user?.displayName?.split(' ')[0] || 'Farmer'}!</h1> </div> <div className="relative"> <span className="absolute inset-y-0 left-0 flex items-center pl-3"> <Search className="h-5 w-5 text-gray-400" aria-hidden="true" /> </span> <input type="text" placeholder="Search plants by name, type, zone..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-md leading-5 bg-white placeholder-gray-500 text-gray-400 focus:outline-none focus:placeholder-gray-400 focus:ring-1 focus:ring-green-500 focus:border-green-500 sm:text-sm" /> </div> </div> </div>
         </header>
 
         <main className="flex-1 overflow-y-auto p-6 lg:p-8">
@@ -467,11 +453,11 @@ export default function PlantsPage() {
 
       {isAddPlantModalOpen && (
        <AddPlantModal
-           isOpen={isAddPlantModalOpen}
-           onClose={() => setIsAddPlantModalOpen(false)}
-           onSubmit={handleAddPlantSubmit}
-           usableAreaSqM={remainingAreaSqM > 0 ? remainingAreaSqM : 0} // Pass current remaining area
-           lifecycleData={allLifecycleData}
+          isOpen={isAddPlantModalOpen}
+          onClose={() => setIsAddPlantModalOpen(false)}
+          onSubmit={handleAddPlantSubmit}
+          usableAreaSqM={remainingAreaSqM > 0 ? remainingAreaSqM : 0} 
+          lifecycleData={allLifecycleData}
        />
       )}
     </div>

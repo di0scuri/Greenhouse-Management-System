@@ -3,20 +3,27 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 
-import { doc, getDoc, collection, query, where, orderBy, getDocs, Timestamp, addDoc, serverTimestamp } from 'firebase/firestore';
-import { ref, get } from "firebase/database"; // For RTDB image fetching
-import { firestore, auth, database } from '@/app/lib/firebase/config';
+import {
+  doc, getDoc, collection, query, where, orderBy, getDocs,
+  Timestamp, addDoc, serverTimestamp, runTransaction, increment
+} from 'firebase/firestore';
+import { ref, get } from "firebase/database"; // For Firebase Realtime Database (if used for images)
+import { firestore, auth, database } from '@/app/lib/firebase/config'; // Adjust path if needed
 import { useAuthState } from 'react-firebase-hooks/auth';
 
 import emailjs from '@emailjs/browser';
 
-import Sidebar from '@/components/Sidebar';
-import LoadingSpinner from '@/components/LoadingSpinner';
-import AddSensorReadingModal, { SensorReadingData } from '@/components/AddSensorReadingModal'; // Ensure this path is correct
+import Sidebar from '@/components/Sidebar'; // Adjust path if needed
+import LoadingSpinner from '@/components/LoadingSpinner'; // Adjust path if needed
+import AddSensorReadingModal, { SensorReadingData } from '@/components/AddSensorReadingModal'; // Adjust path
+// UseItemModal is imported but its invocation is commented out as SelectItemForUsageModal now handles integrated usage logging.
+import UseItemModal from '@/components/UseItemModal'; 
+import SelectItemForUsageModal, { InventoryItem as SelectableInventoryItem } from '@/components/SelectItemForUsageModal'; // Adjust path
 
 import {
-    Loader2, AlertTriangle, Leaf, ImageOff, Thermometer, Droplets, TestTube2, Zap, Menu, X, Clock,
-    ListChecks, History, DollarSign, ShoppingCart, Settings, PlusCircle, Package, FileText, BarChart3, Lightbulb, Check, AlertCircle, Activity, Info, FlaskConical, MailWarning, Plus
+    Loader2, AlertTriangle, Leaf, ImageOff, Thermometer, Droplets, TestTube2, Zap, Clock,
+    History, DollarSign, ShoppingCart, Settings, PlusCircle, Package, FileText, BarChart3,
+    Check, AlertCircle, Activity, Info, FlaskConical, MailWarning, MinusCircle as UseIcon
 } from 'lucide-react';
 import Link from 'next/link';
 
@@ -50,12 +57,27 @@ interface SensorReading {
 interface PlantEvent {
   id: string;
   timestamp: Date;
-  createdAt: Date;
+  createdAt: Date; 
   type: string;
   message: string;
   plantId: string;
   status?: string;
   userId: string;
+}
+
+export interface InventoryItem {
+  id: string;
+  name: string;
+  category: string;
+  stock: number;
+  unit: string;
+  pricePerUnit: number;
+  lowStockThreshold?: number;
+  lastUpdated?: Date;
+  ownerUid?: string;
+  n_percentage?: number;
+  p_percentage?: number;
+  k_percentage?: number;
 }
 
 interface InventoryLogEntry {
@@ -73,16 +95,13 @@ interface InventoryLogEntry {
   unit?: string;
 }
 
-interface StageSpecificRequirements { // Renamed from StageRequirements for clarity
+interface StageSpecificRequirements {
     name: string;
     startDay: number;
     description?: string;
-    minN?: number;
-    maxN?: number;
-    minP?: number;
-    maxP?: number;
-    minK?: number;
-    maxK?: number;
+    minN?: number;    maxN?: number;
+    minP?: number;    maxP?: number;
+    minK?: number;    maxK?: number;
     targetN_ppm?: number;
     targetP_ppm?: number;
     targetK_ppm?: number;
@@ -94,36 +113,25 @@ interface PlantLifecycle {
   maturityDays: number;
   harvestDays: number;
   spacingCm: number;
-  // Top-level environmental thresholds
-  minTemp?: number;
-  maxTemp?: number;
-  minHumidity?: number;
-  maxHumidity?: number;
-  minPH?: number;
-  maxPH?: number;
-  minEC?: number; // Assuming this is the field name from Firestore for EC
-  maxEC?: number; // Assuming this is the field name from Firestore for EC
+  minTemp?: number;  maxTemp?: number;
+  minHumidity?: number; maxHumidity?: number;
+  minPH?: number; maxPH?: number;
+  minEC?: number; maxEC?: number;
   stages: StageSpecificRequirements[];
 }
 
-// This interface represents the combined requirements for the CURRENT stage
 interface CurrentStageCombinedRequirements extends StageSpecificRequirements {
-    minTempC?: number;
-    maxTempC?: number;
-    minHumidityPercent?: number;
-    maxHumidityPercent?: number;
-    minPH?: number;
-    maxPH?: number;
-    minEC_mS_cm?: number; // This will be mapped from PlantLifecycle.minEC
-    maxEC_mS_cm?: number; // This will be mapped from PlantLifecycle.maxEC
+    minTempC?: number;    maxTempC?: number;
+    minHumidityPercent?: number; maxHumidityPercent?: number;
+    minPH?: number;    maxPH?: number;
+    minEC_mS_cm?: number; maxEC_mS_cm?: number;
 }
-
 
 interface UserSettings {
     defaultProfitMargin?: number;
 }
 
- interface FertilizerItem {
+interface FertilizerForRecommendation {
     id: string;
     name: string;
     stock: number;
@@ -142,6 +150,9 @@ interface FormattedFertilizerRecommendation {
     unit?: string;
 }
 
+const PLANT_ALERT_COOLDOWN_KEY_PREFIX = "plant_alert_summary_";
+const PLANT_ALERT_COOLDOWN_PERIOD_MS = 6 * 60 * 60 * 1000; // 6 hours
+
 // --- Helper Functions ---
 const formatCurrency = (value: number, forceZeroDisplay = false): string => {
     if (value === 0 && !forceZeroDisplay && value !== null && value !== undefined) return '-';
@@ -151,7 +162,7 @@ const formatCurrency = (value: number, forceZeroDisplay = false): string => {
 
 const formatDate = (date: Date | null | undefined): string => {
     if (!date || !(date instanceof Date) || isNaN(date.getTime())) return 'N/A';
-    return date.toLocaleDateString('en-CA') + ' ' + date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+    return date.toLocaleDateString('en-CA', { year: 'numeric', month: 'short', day: 'numeric' }) + ' ' + date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
  };
 
 const getLogTypeStyle = (type: InventoryLogEntry['type']) => {
@@ -186,21 +197,6 @@ const getNpkStatus = (currentValue?: number, lowThreshold?: number, highThreshol
     return checkThreshold(currentValue, lowThreshold, highThreshold);
 };
 
-type NotificationCooldownKey = 'tempLow' | 'tempHigh' | 'humidityLow' | 'humidityHigh' | 'phLow' | 'phHigh' | 'ecLow' | 'ecHigh' | 'nLow' | 'nHigh' | 'pLow' | 'pHigh' | 'kLow' | 'kHigh';
-type NotificationCooldown = {
-    [key in NotificationCooldownKey]?: number;
-};
-const COOLDOWN_PERIOD_MS = 6 * 60 * 60 * 1000;
-
-const alertTypeMapping: Record<NotificationCooldownKey, string> = {
-    tempLow: "Low Temperature", tempHigh: "High Temperature",
-    humidityLow: "Low Humidity", humidityHigh: "High Humidity",
-    phLow: "Low pH", phHigh: "High pH",
-    ecLow: "Low EC", ecHigh: "High EC",
-    nLow: "Low Nitrogen", nHigh: "High Nitrogen",
-    pLow: "Low Phosphorus", pHigh: "High Phosphorus",
-    kLow: "Low Potassium", kHigh: "High Potassium",
-};
 
 export default function PlantDetailPage() {
   const [user, loadingAuth, errorAuth] = useAuthState(auth);
@@ -231,12 +227,19 @@ export default function PlantDetailPage() {
   const [currentStageRequirements, setCurrentStageRequirements] = useState<CurrentStageCombinedRequirements | null>(null);
   type DetailTab = 'Status' | 'Events' | 'Costs' | 'Sensors';
   const [activeDetailTab, setActiveDetailTab] = useState<DetailTab>('Status');
-  const notificationCooldowns = useRef<NotificationCooldown>({});
+  const plantAlertCooldowns = useRef<{[plantId: string]: number}>({});
   const [emailError, setEmailError] = useState<string | null>(null);
-  const [availableFertilizers, setAvailableFertilizers] = useState<FertilizerItem[]>([]);
-  const [isFertilizersLoading, setIsFertilizersLoading] = useState<boolean>(true);
-  const [fertilizersError, setFertilizersError] = useState<string | null>(null);
+  const [allInventoryItems, setAllInventoryItems] = useState<InventoryItem[]>([]);
+  const [isInventoryLoading, setIsInventoryLoading] = useState<boolean>(true);
+  const [inventoryError, setInventoryError] = useState<string | null>(null);
   const [isAddSensorModalOpen, setIsAddSensorModalOpen] = useState(false);
+  const [isSelectItemModalOpen, setIsSelectItemModalOpen] = useState(false);
+  // itemToUseForCost and isUseItemForCostModalOpen are related to UseItemModal, 
+  // which might be a separate modal or its functionality is now merged into SelectItemForUsageModal.
+  // For clarity, if SelectItemForUsageModal handles everything, these might not be needed at this page level.
+  // const [itemToUseForCost, setItemToUseForCost] = useState<InventoryItem | null>(null); 
+  // const [isUseItemForCostModalOpen, setIsUseItemForCostModalOpen] = useState(false); 
+
 
   useEffect(() => {
     if (!loadingAuth && !user && !errorAuth) {
@@ -245,7 +248,7 @@ export default function PlantDetailPage() {
   }, [user, loadingAuth, errorAuth, router]);
 
   // Fetch Plant Details & Image
-  useEffect(() => {
+ useEffect(() => {
     if (!loadingAuth && user && firestore && plantId) {
       const fetchPlantAndImage = async () => {
           setIsLoading(true); setIsImageLoading(true); setError(null); setImageData(null);
@@ -254,7 +257,7 @@ export default function PlantDetailPage() {
               const plantDocSnap = await getDoc(plantDocRef);
               if (!plantDocSnap.exists()) { throw new Error("Plant not found."); }
               const data = plantDocSnap.data();
-              if (data.ownerUid !== user.uid) { throw new Error("Permission denied to view this plant."); }
+              if (data.ownerUid !== user.uid) { throw new Error("Permission denied. You do not own this plant."); }
               const fetchedPlantDetails: PlantDetails = {
                   id: plantDocSnap.id, name: data.name || 'N/A', type: data.type || 'N/A',
                   imageUrl: data.imageUrl || null,
@@ -265,69 +268,68 @@ export default function PlantDetailPage() {
               setPlantDetails(fetchedPlantDetails);
               if (fetchedPlantDetails.imageUrl) {
                 if (fetchedPlantDetails.imageUrl.startsWith('plantImages/')) {
-                    if (!database) { console.warn("RTDB not initialized"); setIsImageLoading(false); return; }
+                    if (!database) { console.warn("RTDB not initialized for image fetching."); setIsImageLoading(false); return; }
                     const imageRefRTDB = ref(database, fetchedPlantDetails.imageUrl);
                     const imageSnapshot = await get(imageRefRTDB);
                     if (imageSnapshot.exists()) {
                         const base64Data = imageSnapshot.val();
-                        if (typeof base64Data === 'string' && base64Data.startsWith('data:image/')) {
-                            setImageData(base64Data);
-                        } else { console.warn("Invalid image format in RTDB for:", fetchedPlantDetails.imageUrl); }
+                        if (typeof base64Data === 'string' && base64Data.startsWith('data:image/')) { setImageData(base64Data); } 
+                        else { console.warn("Invalid image format in RTDB:", fetchedPlantDetails.imageUrl); }
                     } else { console.warn("Image not found in RTDB at path:", fetchedPlantDetails.imageUrl); }
                 } else if (fetchedPlantDetails.imageUrl.startsWith('http')) { setImageData(fetchedPlantDetails.imageUrl); }
                 else { console.warn("Unknown imageUrl format:", fetchedPlantDetails.imageUrl); }
               }
-          } catch (err: any) { console.error("Fetch plant error:", err); setError(err.message); setPlantDetails(null); }
+          } catch (err: any) { console.error("Error fetching plant details:", err); setError(err.message); setPlantDetails(null); }
           finally { setIsLoading(false); setIsImageLoading(false); }
       };
       fetchPlantAndImage();
-    } else if (!plantId && !loadingAuth) { setError("Plant ID missing in URL."); setIsLoading(false); setIsImageLoading(false); }
-      else if ((!firestore || !database) && !loadingAuth && user) { setError("Database service is not available."); setIsLoading(false); setIsImageLoading(false); }
-  }, [plantId, user, loadingAuth]); // firestore and database are stable, no need in deps if initialized once globally
+    } else if (!plantId && !loadingAuth) { setError("Plant ID is missing in the URL."); setIsLoading(false); setIsImageLoading(false); }
+      else if ((!firestore || !database) && !loadingAuth && user) { setError("Database services are not fully available."); setIsLoading(false); setIsImageLoading(false); }
+  }, [plantId, user, loadingAuth, firestore, database]);
 
   // Fetch Plant Lifecycle Data
- useEffect(() => {
-    if (plantDetails?.type && firestore) {
+  useEffect(() => {
+    if (plantDetails?.type && firestore && !isLoading) { 
         const fetchLifecycleData = async () => {
-            setIsLifecycleLoading(true); setLifecycleError(null);
+            setIsLifecycleLoading(true); setLifecycleError(null); setPlantLifecycleData(null);
             const typeDocRef = doc(firestore, 'plantTypes', plantDetails.type);
             const defaultTypeDocRef = doc(firestore, 'plantTypes', 'Default');
             try {
                 let docSnap = await getDoc(typeDocRef);
                 if (!docSnap.exists()) {
-                    console.warn(`Lifecycle data not found for type: ${plantDetails.type}. Trying Default.`);
+                    console.warn(`Lifecycle data for type "${plantDetails.type}" not found. Attempting to load "Default" configuration.`);
                     docSnap = await getDoc(defaultTypeDocRef);
                 }
                 if (docSnap.exists()) { setPlantLifecycleData(docSnap.data() as PlantLifecycle); }
-                else { setLifecycleError(`Plant configuration not found for type "${plantDetails.type}" or Default.`); setPlantLifecycleData(null); }
-            } catch (err) { console.error("Fetch lifecycle error:", err); setLifecycleError("Failed to load plant lifecycle configuration."); setPlantLifecycleData(null); }
+                else { setLifecycleError(`Plant configuration not found for type "${plantDetails.type}" or for "Default".`); }
+            } catch (err:any) { console.error("Error fetching plant lifecycle data:", err); setLifecycleError(`Failed to load plant lifecycle config: ${err.message}`); }
             finally { setIsLifecycleLoading(false); }
         };
         fetchLifecycleData();
-    } else if (plantDetails && !plantDetails.type) { setIsLifecycleLoading(false); setLifecycleError("Plant type is missing for this plant."); setPlantLifecycleData(null); }
-    else if (!plantDetails && !isLoading) { setIsLifecycleLoading(false); }
+    } else if (plantDetails && !plantDetails.type && !isLoading) { setIsLifecycleLoading(false); setLifecycleError("Plant type is missing, cannot load lifecycle data."); }
+      else if (!plantDetails && !isLoading) { setIsLifecycleLoading(false); }
   }, [plantDetails, firestore, isLoading]);
 
   // Fetch User Settings
   useEffect(() => {
-      if (user && firestore) {
+      if (user && firestore && !loadingAuth) {
           const fetchUserSettings = async () => {
-              setIsSettingsLoading(true); setSettingsError(null);
+              setIsSettingsLoading(true); setSettingsError(null); setUserSettings({});
               const userDocRef = doc(firestore, 'users', user.uid);
               try {
                   const docSnap = await getDoc(userDocRef);
                   if (docSnap.exists()) { setUserSettings(docSnap.data() as UserSettings); }
-                  else { setUserSettings({}); }
-              } catch (err) { console.error("Fetch settings error:", err); setSettingsError("Failed to load user settings."); }
+                  else { console.warn("User settings document not found."); }
+              } catch (err:any) { console.error("Error fetching user settings:", err); setSettingsError(`Failed to load user settings: ${err.message}`); }
               finally { setIsSettingsLoading(false); }
           };
           fetchUserSettings();
-      } else { setIsSettingsLoading(false); if (!user && !loadingAuth) setUserSettings({});}
+      } else if (!user && !loadingAuth) { setIsSettingsLoading(false); setUserSettings({});}
   }, [user, firestore, loadingAuth]);
 
   // Fetch Sensor History
   useEffect(() => {
-      if (user && firestore && plantId) {
+      if (user && firestore && plantId && !loadingAuth) {
           const fetchSensorHistory = async () => {
               setIsSensorHistoryLoading(true); setSensorHistoryError(null); setSensorHistory([]);
               try {
@@ -337,19 +339,30 @@ export default function PlantDetailPage() {
                   const fetchedReadings: SensorReading[] = [];
                   readingsSnapshot.forEach((docSnap) => {
                       const readingData = docSnap.data();
-                      fetchedReadings.push({ id: docSnap.id, timestamp: readingData.timestamp instanceof Timestamp ? readingData.timestamp.toDate() : new Date(readingData.timestamp), temperature: typeof readingData.temperature === 'number' ? readingData.temperature : undefined, humidity: typeof readingData.humidity === 'number' ? readingData.humidity : undefined, ph: typeof readingData.ph === 'number' ? readingData.ph : undefined, ec: typeof readingData.ec === 'number' ? readingData.ec : undefined, nitrogen: typeof readingData.nitrogen === 'number' ? readingData.nitrogen : undefined, phosphorus: typeof readingData.phosphorus === 'number' ? readingData.phosphorus : undefined, potassium: typeof readingData.potassium === 'number' ? readingData.potassium : undefined, notes: readingData.notes });
+                      fetchedReadings.push({ 
+                          id: docSnap.id, 
+                          timestamp: readingData.timestamp instanceof Timestamp ? readingData.timestamp.toDate() : new Date(readingData.timestamp), 
+                          temperature: typeof readingData.temperature === 'number' ? readingData.temperature : undefined, 
+                          humidity: typeof readingData.humidity === 'number' ? readingData.humidity : undefined, 
+                          ph: typeof readingData.ph === 'number' ? readingData.ph : undefined, 
+                          ec: typeof readingData.ec === 'number' ? readingData.ec : undefined, 
+                          nitrogen: typeof readingData.nitrogen === 'number' ? readingData.nitrogen : undefined, 
+                          phosphorus: typeof readingData.phosphorus === 'number' ? readingData.phosphorus : undefined, 
+                          potassium: typeof readingData.potassium === 'number' ? readingData.potassium : undefined, 
+                          notes: readingData.notes 
+                      });
                   });
                   setSensorHistory(fetchedReadings);
-              } catch (err: any) { console.error("Fetch sensor error:", err); setSensorHistoryError("Failed to load sensor history."); }
+              } catch (err: any) { console.error("Error fetching sensor history:", err); setSensorHistoryError(`Failed to load sensor history: ${err.message}`); }
               finally { setIsSensorHistoryLoading(false); }
           };
           fetchSensorHistory();
-      } else { setIsSensorHistoryLoading(false); if(!plantId && user) setSensorHistory([]);}
-  }, [plantId, user, firestore]);
+      } else if (!plantId && user && !loadingAuth) { setIsSensorHistoryLoading(false); setSensorHistory([]);}
+  }, [plantId, user, firestore, loadingAuth]);
 
   // Fetch Plant Events
   useEffect(() => {
-      if (user && firestore && plantId) {
+      if (user && firestore && plantId && !loadingAuth) {
           const fetchPlantEvents = async () => {
               setIsPlantEventsLoading(true); setPlantEventsError(null); setPlantEvents([]);
               try {
@@ -359,185 +372,188 @@ export default function PlantDetailPage() {
                   const fetchedEvents: PlantEvent[] = [];
                   querySnapshot.forEach((docSnap) => {
                       const data = docSnap.data();
-                      fetchedEvents.push({ id: docSnap.id, timestamp: data.timestamp instanceof Timestamp ? data.timestamp.toDate() : new Date(data.timestamp), createdAt: data.createdAt instanceof Timestamp ? data.createdAt.toDate() : new Date(data.createdAt), type: data.type || 'Unknown', message: data.message || 'No description', plantId: data.plantId, status: data.status, userId: data.userId });
+                      fetchedEvents.push({ 
+                          id: docSnap.id, 
+                          timestamp: data.timestamp instanceof Timestamp ? data.timestamp.toDate() : new Date(data.timestamp), 
+                          createdAt: data.createdAt instanceof Timestamp ? data.createdAt.toDate() : new Date(data.createdAt), 
+                          type: data.type || 'Unknown', message: data.message || 'No description', 
+                          plantId: data.plantId, status: data.status, userId: data.userId 
+                      });
                   });
                   setPlantEvents(fetchedEvents);
-              } catch (err: any) { console.error("Fetch events error:", err); setPlantEventsError("Failed to load event history."); }
+              } catch (err: any) { console.error("Error fetching plant events:", err); setPlantEventsError(`Failed to load event history: ${err.message}`); }
               finally { setIsPlantEventsLoading(false); }
           };
           fetchPlantEvents();
-      } else { setIsPlantEventsLoading(false); if(!plantId && user) setPlantEvents([]);}
-  }, [plantId, user, firestore]);
+      } else if (!plantId && user && !loadingAuth) { setIsPlantEventsLoading(false); setPlantEvents([]);}
+  }, [plantId, user, firestore, loadingAuth]);
 
   // Fetch Cost Logs
   useEffect(() => {
-    if (user && firestore && plantId) {
+    if (user && firestore && plantId && !loadingAuth) {
       const fetchCostLogs = async () => {
         setIsCostLoading(true); setCostError(null); setCostLogs([]);
         try {
           const logCollectionRef = collection(firestore, 'inventory_log');
-          const costTypes: InventoryLogEntry['type'][] = ['Seed Planted', 'Fertilizer Used', 'Material Used', 'Purchase'];
-          const saleType: InventoryLogEntry['type'] = 'Sale';
           const q = query( logCollectionRef, where("plantId", "==", plantId), where("userId", "==", user.uid), orderBy("timestamp", "desc") );
           const querySnapshot = await getDocs(q);
           const fetchedLogs: InventoryLogEntry[] = [];
           querySnapshot.forEach((docSnap) => {
             const data = docSnap.data();
-            if ([...costTypes, saleType].includes(data.type)) {
-                const quantityChange = Number(data.quantityChange) || 0;
-                const costOrValuePerUnit = Number(data.costOrValuePerUnit) || 0;
-                fetchedLogs.push({ id: docSnap.id, itemId: data.itemId || 'N/A', itemName: data.itemName || 'N/A', timestamp: data.timestamp instanceof Timestamp ? data.timestamp.toDate() : new Date(data.timestamp), type: data.type as InventoryLogEntry['type'], quantityChange: quantityChange, costOrValuePerUnit: costOrValuePerUnit, totalCostOrValue: Math.abs(quantityChange) * costOrValuePerUnit, notes: data.notes || '', userId: data.userId, plantId: data.plantId, unit: data.unit });
-            }
+            const quantityChange = Number(data.quantityChange) || 0;
+            const costOrValuePerUnit = Number(data.costOrValuePerUnit) || 0;
+            fetchedLogs.push({ 
+                id: docSnap.id, 
+                itemId: data.itemId || 'N/A', 
+                itemName: data.itemName || 'N/A', 
+                timestamp: data.timestamp instanceof Timestamp ? data.timestamp.toDate() : new Date(data.timestamp), 
+                type: data.type as InventoryLogEntry['type'], 
+                quantityChange: quantityChange, 
+                costOrValuePerUnit: costOrValuePerUnit, 
+                totalCostOrValue: Math.abs(quantityChange) * costOrValuePerUnit,
+                notes: data.notes || '', 
+                userId: data.userId, 
+                plantId: data.plantId, 
+                unit: data.unit 
+            });
           });
           setCostLogs(fetchedLogs);
-        } catch (err: any) { console.error("Fetch cost logs error:", err); setCostError("Failed to load cost history for this plant."); }
+        } catch (err: any) { console.error("Error fetching cost logs:", err); setCostError(`Failed to load cost logs: ${err.message}`); }
         finally { setIsCostLoading(false); }
       };
       fetchCostLogs();
-    } else { setIsCostLoading(false); if(!plantId && user) setCostLogs([]);}
-  }, [plantId, user, firestore]);
+    } else if (!plantId && user && !loadingAuth) { setIsCostLoading(false); setCostLogs([]);}
+  }, [plantId, user, firestore, loadingAuth]);
+
+  // Fetch All (In-Stock) Inventory Items
+  useEffect(() => {
+    if (user && firestore && !loadingAuth) { 
+      const fetchAllInventory = async () => {
+        console.log("[PlantDetailPage] Attempting to fetch all in-stock inventory items...");
+        setIsInventoryLoading(true);
+        setInventoryError(null);
+        setAllInventoryItems([]);
+        const inventoryRef = collection(firestore, 'inventory');
+        const q = query(inventoryRef, where("stock", ">", 0)); 
+        try {
+          console.log("[PlantDetailPage] Executing inventory query: category='any', stock > 0.");
+          const querySnapshot = await getDocs(q);
+          console.log("[PlantDetailPage] All inventory querySnapshot received. Size:", querySnapshot.size);
+          const fetchedItems: InventoryItem[] = [];
+          querySnapshot.forEach((docSnap) => {
+            const data = docSnap.data();
+            fetchedItems.push({
+              id: docSnap.id, name: data.name || 'Unnamed Item', category: data.category || 'other',
+              stock: Number(data.stock) || 0, unit: data.unit || 'unit',
+              pricePerUnit: Number(data.pricePerUnit) || 0,
+              lowStockThreshold: data.lowStockThreshold !== undefined ? Number(data.lowStockThreshold) : undefined,
+              lastUpdated: data.lastUpdated instanceof Timestamp ? data.lastUpdated.toDate() : (data.lastUpdated ? new Date(data.lastUpdated) : undefined),
+              ownerUid: data.ownerUid, 
+              n_percentage: typeof data.n_percentage === 'number' ? data.n_percentage : undefined,
+              p_percentage: typeof data.p_percentage === 'number' ? data.p_percentage : undefined,
+              k_percentage: typeof data.k_percentage === 'number' ? data.k_percentage : undefined,
+            });
+          });
+          setAllInventoryItems(fetchedItems.sort((a, b) => a.name.localeCompare(b.name)));
+          if (querySnapshot.empty) { console.log("[PlantDetailPage] No inventory items found matching criteria (stock > 0)."); } 
+          else { console.log("[PlantDetailPage] Successfully processed", fetchedItems.length, "inventory items."); }
+        } catch (error: any) {
+          console.error("[PlantDetailPage] Error fetching all inventory. Code:", error.code, "Message:", error.message, "Full Error:", error);
+          setInventoryError(`Failed to load inventory. Error: ${error.code || 'Unknown'} - ${error.message || 'Please check console and Firestore rules/indexes.'}`);
+        } finally { setIsInventoryLoading(false); }
+      };
+      fetchAllInventory();
+    } else {
+      setIsInventoryLoading(false); setAllInventoryItems([]);
+      if (!user && !loadingAuth) { console.warn("[PlantDetailPage] All inventory not fetched: User not authenticated or user object not yet available."); }
+      if (!firestore && !loadingAuth) { console.warn("[PlantDetailPage] All inventory not fetched: Firestore service not available."); }
+    }
+  }, [user, firestore, loadingAuth]); 
 
   // Determine Current Stage Requirements
   useEffect(() => {
-      if (plantDetails?.datePlanted && plantLifecycleData?.stages && plantLifecycleData.stages.length > 0) {
+      if (plantDetails?.datePlanted && plantLifecycleData?.stages && plantLifecycleData.stages.length > 0 && !isLifecycleLoading) {
           const today = new Date();
           const plantedDate = plantDetails.datePlanted instanceof Date ? plantDetails.datePlanted : new Date(plantDetails.datePlanted);
-          if (isNaN(plantedDate.getTime())) {
-              console.warn("Invalid datePlanted for current stage calculation.");
-              setCurrentStageRequirements(null);
-              return;
-          }
+          if (isNaN(plantedDate.getTime())) { console.warn("Invalid datePlanted for current stage calculation."); setCurrentStageRequirements(null); return; }
           const timeDiff = today.getTime() - plantedDate.getTime();
           const daysSincePlanted = Math.max(0, Math.floor(timeDiff / (1000 * 60 * 60 * 24)));
-
           let activeStage: StageSpecificRequirements | null = null;
           for (let i = plantLifecycleData.stages.length - 1; i >= 0; i--) {
-              if (daysSincePlanted >= plantLifecycleData.stages[i].startDay) {
-                  activeStage = plantLifecycleData.stages[i];
-                  break;
-              }
+              if (daysSincePlanted >= plantLifecycleData.stages[i].startDay) { activeStage = plantLifecycleData.stages[i]; break; }
           }
-          if (!activeStage && plantLifecycleData.stages.length > 0) {
-              activeStage = plantLifecycleData.stages[0];
-          }
-
+          if (!activeStage && plantLifecycleData.stages.length > 0) activeStage = plantLifecycleData.stages[0];
           if (activeStage) {
               const combinedReqs: CurrentStageCombinedRequirements = {
                   ...activeStage,
-                  minTempC: plantLifecycleData.minTemp,
-                  maxTempC: plantLifecycleData.maxTemp,
-                  minHumidityPercent: plantLifecycleData.minHumidity,
-                  maxHumidityPercent: plantLifecycleData.maxHumidity,
-                  minPH: plantLifecycleData.minPH,
-                  maxPH: plantLifecycleData.maxPH,
-                  minEC_mS_cm: plantLifecycleData.minEC,
-                  maxEC_mS_cm: plantLifecycleData.maxEC,
+                  minTempC: plantLifecycleData.minTemp, maxTempC: plantLifecycleData.maxTemp,
+                  minHumidityPercent: plantLifecycleData.minHumidity, maxHumidityPercent: plantLifecycleData.maxHumidity,
+                  minPH: plantLifecycleData.minPH, maxPH: plantLifecycleData.maxPH,
+                  minEC_mS_cm: plantLifecycleData.minEC, maxEC_mS_cm: plantLifecycleData.maxEC,
               };
               setCurrentStageRequirements(combinedReqs);
-          } else {
-              console.warn("No active stage could be determined for plant:", plantDetails.name);
-              setCurrentStageRequirements(null);
-          }
-      } else {
-          setCurrentStageRequirements(null);
-      }
-  }, [plantDetails, plantLifecycleData]);
+          } else { console.warn("No active stage could be determined for plant:", plantDetails.name); setCurrentStageRequirements(null); }
+      } else if (!isLifecycleLoading) { setCurrentStageRequirements(null); }
+  }, [plantDetails, plantLifecycleData, isLifecycleLoading]);
 
-  // Fetch available fertilizers
-  useEffect(() => {
-      if (user && firestore) {
-          const fetchFertilizers = async () => {
-              setIsFertilizersLoading(true); setFertilizersError(null); setAvailableFertilizers([]);
-              const inventoryRef = collection(firestore, 'inventory');
-              const q = query(inventoryRef, where("category", "==", "fertilizers"), where("stock", ">", 0));
-              try {
-                  const querySnapshot = await getDocs(q);
-                  const fetchedFertilizers: FertilizerItem[] = [];
-                  querySnapshot.forEach((docSnap) => {
-                      const data = docSnap.data();
-                      fetchedFertilizers.push({
-                          id: docSnap.id, name: data.name || 'Unnamed Fertilizer', stock: data.stock || 0, unit: data.unit || 'unit',
-                          n_percentage: typeof data.n_percentage === 'number' ? data.n_percentage : undefined,
-                          p_percentage: typeof data.p_percentage === 'number' ? data.p_percentage : undefined,
-                          k_percentage: typeof data.k_percentage === 'number' ? data.k_percentage : undefined,
-                      });
-                  });
-                  setAvailableFertilizers(fetchedFertilizers);
-              } catch (error: any) { console.error("Error fetching fertilizers:", error); setFertilizersError("Failed to load available fertilizers."); }
-              finally { setIsFertilizersLoading(false); }
-          };
-          fetchFertilizers();
-      } else { setIsFertilizersLoading(false); setAvailableFertilizers([]); }
-  }, [user, firestore]);
-
+  // --- useMemo Hooks for Derived Data ---
+  const availableFertilizers = useMemo((): FertilizerForRecommendation[] => { 
+    if (isInventoryLoading || inventoryError || !allInventoryItems || allInventoryItems.length === 0) return [];
+    return allInventoryItems
+        .filter(item => item.category === 'fertilizers' && item.stock > 0)
+        .map(item => ({ id: item.id, name: item.name, stock: item.stock, unit: item.unit, n_percentage: item.n_percentage, p_percentage: item.p_percentage, k_percentage: item.k_percentage, }));
+  }, [allInventoryItems, isInventoryLoading, inventoryError]);
 
   const latestReading = useMemo(() => sensorHistory.length > 0 ? sensorHistory[0] : null, [sensorHistory]);
-  const { totalCost, totalRevenue } = useMemo(() => {
-      if (isCostLoading || costLogs.length === 0) return { totalCost: 0, totalRevenue: 0 };
-      let cost = 0; let revenue = 0;
-      const costTypes: InventoryLogEntry['type'][] = ['Seed Planted', 'Fertilizer Used', 'Material Used', 'Purchase'];
-      costLogs.forEach(log => {
-          if (costTypes.includes(log.type)) { cost += log.totalCostOrValue; }
-          else if (log.type === 'Sale') { revenue += log.totalCostOrValue; }
-      });
-      return { totalCost: cost, totalRevenue: revenue };
+  const { totalCost, totalRevenue } = useMemo(() => { 
+    if (isCostLoading || costLogs.length === 0) return { totalCost: 0, totalRevenue: 0 };
+    let cost = 0; let revenue = 0;
+    const costItemTypes: InventoryLogEntry['type'][] = ['Seed Planted', 'Fertilizer Used', 'Material Used', 'Purchase', 'Initial Stock'];
+    costLogs.forEach(log => {
+        if (costItemTypes.includes(log.type)) { cost += log.totalCostOrValue; }
+        else if (log.type === 'Sale') { revenue += log.totalCostOrValue; }
+    });
+    return { totalCost: cost, totalRevenue: revenue };
   }, [costLogs, isCostLoading]);
 
   const suggestedPrice = useMemo(() => {
-      if (isCostLoading || isSettingsLoading || totalCost <= 0) return null;
-      const margin = userSettings.defaultProfitMargin ?? 0.20;
-      return totalCost * (1 + margin);
+    if (isCostLoading || isSettingsLoading || totalCost <= 0) return null;
+    const margin = userSettings.defaultProfitMargin ?? 0.20;
+    return totalCost * (1 + margin);
   }, [totalCost, userSettings, isCostLoading, isSettingsLoading]);
 
   const environmentStatus = useMemo(() => {
-      if (isSensorHistoryLoading || !latestReading || !currentStageRequirements) {
-          return { temp: null, humidity: null, ph: null, ec: null };
-      }
-      return {
-          temp: checkThreshold(latestReading.temperature, currentStageRequirements.minTempC, currentStageRequirements.maxTempC),
-          humidity: checkThreshold(latestReading.humidity, currentStageRequirements.minHumidityPercent, currentStageRequirements.maxHumidityPercent),
-          ph: checkThreshold(latestReading.ph, currentStageRequirements.minPH, currentStageRequirements.maxPH),
-          ec: checkThreshold(latestReading.ec, currentStageRequirements.minEC_mS_cm, currentStageRequirements.maxEC_mS_cm)
-      };
+    if (isSensorHistoryLoading || !latestReading || !currentStageRequirements) { return { temp: null, humidity: null, ph: null, ec: null }; }
+    return {
+        temp: checkThreshold(latestReading.temperature, currentStageRequirements.minTempC, currentStageRequirements.maxTempC),
+        humidity: checkThreshold(latestReading.humidity, currentStageRequirements.minHumidityPercent, currentStageRequirements.maxHumidityPercent),
+        ph: checkThreshold(latestReading.ph, currentStageRequirements.minPH, currentStageRequirements.maxPH),
+        ec: checkThreshold(latestReading.ec, currentStageRequirements.minEC_mS_cm, currentStageRequirements.maxEC_mS_cm)
+    };
   }, [latestReading, currentStageRequirements, isSensorHistoryLoading]);
 
   const npkStatus = useMemo(() => {
-      if (isSensorHistoryLoading || !latestReading || !currentStageRequirements) {
-          return { n: { status: 'N/A', color: 'text-gray-500' } as StatusResult, p: { status: 'N/A', color: 'text-gray-500' } as StatusResult, k: { status: 'N/A', color: 'text-gray-500' } as StatusResult };
-      }
-      return {
-          n: getNpkStatus(latestReading.nitrogen, currentStageRequirements.minN, currentStageRequirements.maxN),
-          p: getNpkStatus(latestReading.phosphorus, currentStageRequirements.minP, currentStageRequirements.maxP),
-          k: getNpkStatus(latestReading.potassium, currentStageRequirements.minK, currentStageRequirements.maxK),
-      };
+    if (isSensorHistoryLoading || !latestReading || !currentStageRequirements) { return { n: { status: 'N/A', color: 'text-gray-500' } as StatusResult, p: { status: 'N/A', color: 'text-gray-500' } as StatusResult, k: { status: 'N/A', color: 'text-gray-500' } as StatusResult }; }
+    return {
+        n: getNpkStatus(latestReading.nitrogen, currentStageRequirements.minN, currentStageRequirements.maxN),
+        p: getNpkStatus(latestReading.phosphorus, currentStageRequirements.minP, currentStageRequirements.maxP),
+        k: getNpkStatus(latestReading.potassium, currentStageRequirements.minK, currentStageRequirements.maxK),
+    };
   }, [latestReading, currentStageRequirements, isSensorHistoryLoading]);
 
   const fertilizerRecommendations = useMemo((): FormattedFertilizerRecommendation[] => {
-    if (isFertilizersLoading || !npkStatus || !availableFertilizers || availableFertilizers.length === 0 || !currentStageRequirements || !plantDetails) {
-        return [];
-    }
+    if (isInventoryLoading || inventoryError || !npkStatus || availableFertilizers.length === 0 || !currentStageRequirements || !plantDetails) { return []; }
     const recommendations: FormattedFertilizerRecommendation[] = [];
-    const needsN = npkStatus.n.status === 'Low';
-    const needsP = npkStatus.p.status === 'Low';
-    const needsK = npkStatus.k.status === 'Low';
-    const highN = npkStatus.n.status === 'High';
-    const highP = npkStatus.p.status === 'High';
-    const highK = npkStatus.k.status === 'High';
+    const needsN = npkStatus.n.status === 'Low'; const needsP = npkStatus.p.status === 'Low'; const needsK = npkStatus.k.status === 'Low';
+    const highN = npkStatus.n.status === 'High'; const highP = npkStatus.p.status === 'High'; const highK = npkStatus.k.status === 'High';
     const optimalN = npkStatus.n.status === 'Optimal' || npkStatus.n.status === 'OK (>= Min)' || npkStatus.n.status === 'OK (<= Max)';
     const optimalP = npkStatus.p.status === 'Optimal' || npkStatus.p.status === 'OK (>= Min)' || npkStatus.p.status === 'OK (<= Max)';
     const optimalK = npkStatus.k.status === 'Optimal' || npkStatus.k.status === 'OK (>= Min)' || npkStatus.k.status === 'OK (<= Max)';
-
-    if (!needsN && !needsP && !needsK) return [];
-
-    availableFertilizers.forEach(fert => {
-        const n_perc = fert.n_percentage ?? 0;
-        const p_perc = fert.p_percentage ?? 0;
-        const k_perc = fert.k_percentage ?? 0;
-        let suitabilityScore = 0.0;
-        let reasons: string[] = [];
-        let addressesAtLeastOneNeed = false;
-        let deficienciesMetCount = 0;
-
+    if (!needsN && !needsP && !needsK) return []; 
+    availableFertilizers.forEach(fert => { 
+        const n_perc = fert.n_percentage ?? 0; const p_perc = fert.p_percentage ?? 0; const k_perc = fert.k_percentage ?? 0;
+        let suitabilityScore = 0.0; let reasons: string[] = []; let addressesAtLeastOneNeed = false; let deficienciesMetCount = 0;
+        
         if (highN && n_perc > 1) { suitabilityScore -= 200; reasons.push(`Adds N (${n_perc}%) (N is High)`); }
         if (highP && p_perc > 1) { suitabilityScore -= 200; reasons.push(`Adds P (${p_perc}%) (P is High)`); }
         if (highK && k_perc > 1) { suitabilityScore -= 200; reasons.push(`Adds K (${k_perc}%) (K is High)`); }
@@ -550,155 +566,162 @@ export default function PlantDetailPage() {
         if (optimalK && !needsK && k_perc > 5) { suitabilityScore -= 15; reasons.push(`Adds K (${k_perc}%) (K is Optimal)`);}
 
         if (addressesAtLeastOneNeed && suitabilityScore > 0) {
-            let prescribedAmountText = "Qty pending";
-            const TARGET_GRAMS_NUTRIENT_PER_PLANT_EVENT = 0.25;
-            let primaryNutrientPercentageForCalc = 0.0;
-            if (deficienciesMetCount === 1) {
-                if (needsN && n_perc > 0) primaryNutrientPercentageForCalc = n_perc;
-                else if (needsP && p_perc > 0) primaryNutrientPercentageForCalc = p_perc;
-                else if (needsK && k_perc > 0) primaryNutrientPercentageForCalc = k_perc;
-            } else if (deficienciesMetCount > 1) {
-                let tempMaxPerc = 0;
-                if (needsN && n_perc > tempMaxPerc) tempMaxPerc = n_perc;
-                if (needsP && p_perc > tempMaxPerc) tempMaxPerc = p_perc;
-                if (needsK && k_perc > tempMaxPerc) tempMaxPerc = k_perc;
-                primaryNutrientPercentageForCalc = tempMaxPerc;
-            }
-            if (primaryNutrientPercentageForCalc > 0) {
-                const numPlants = plantDetails.initialSeedQuantity || 1;
-                const gramsOfProductPerPlantEvent = (TARGET_GRAMS_NUTRIENT_PER_PLANT_EVENT / (primaryNutrientPercentageForCalc / 100));
-                const totalGramsOfProduct = gramsOfProductPerPlantEvent * Math.max(1, numPlants);
-                prescribedAmountText = totalGramsOfProduct.toFixed(1);
-            }
-            recommendations.push({
-                name: fert.name, reason: reasons.join('. '), score: parseFloat(suitabilityScore.toFixed(2)),
-                npk_display: `${n_perc.toFixed(0)}-${p_perc.toFixed(0)}-${k_perc.toFixed(0)}`,
-                amount: prescribedAmountText, unit: fert.unit || 'units'
-            });
+            let prescribedAmountText = "Qty pending"; const TARGET_GRAMS_NUTRIENT_PER_PLANT_EVENT = 0.25; let primaryNutrientPercentageForCalc = 0.0;
+            if (deficienciesMetCount === 1) { if (needsN && n_perc > 0) primaryNutrientPercentageForCalc = n_perc; else if (needsP && p_perc > 0) primaryNutrientPercentageForCalc = p_perc; else if (needsK && k_perc > 0) primaryNutrientPercentageForCalc = k_perc; } 
+            else if (deficienciesMetCount > 1) { let tempMaxPerc = 0; if (needsN && n_perc > tempMaxPerc) tempMaxPerc = n_perc; if (needsP && p_perc > tempMaxPerc) tempMaxPerc = p_perc; if (needsK && k_perc > tempMaxPerc) tempMaxPerc = k_perc; primaryNutrientPercentageForCalc = tempMaxPerc; }
+            if (primaryNutrientPercentageForCalc > 0) { const numPlants = plantDetails.initialSeedQuantity && plantDetails.initialSeedQuantity > 0 ? plantDetails.initialSeedQuantity : 1; const gramsOfProductPerPlantEvent = (TARGET_GRAMS_NUTRIENT_PER_PLANT_EVENT / (primaryNutrientPercentageForCalc / 100)); const totalGramsOfProduct = gramsOfProductPerPlantEvent * numPlants; prescribedAmountText = totalGramsOfProduct.toFixed(1); }
+            recommendations.push({ name: fert.name, reason: reasons.join('. '), score: parseFloat(suitabilityScore.toFixed(2)), npk_display: `${n_perc.toFixed(0)}-${p_perc.toFixed(0)}-${k_perc.toFixed(0)}`, amount: prescribedAmountText, unit: fert.unit || 'units' });
         }
     });
     return recommendations.sort((a, b) => b.score - a.score).slice(0, 3);
-  }, [npkStatus, availableFertilizers, isFertilizersLoading, currentStageRequirements, plantDetails]);
+  }, [npkStatus, availableFertilizers, isInventoryLoading, inventoryError, currentStageRequirements, plantDetails]);
 
-
-  const sendEmailNotification = useCallback(async (internalAlertType: NotificationCooldownKey, currentValue: string | number, thresholdValue: string | number | undefined) => {
+  // --- MODIFIED Email Notification Logic (Sends to ALL users) ---
+  const sendConsolidatedEmailNotification = useCallback(async (alertTitle: string, consolidatedAlertDetails: string) => {
     setEmailError(null);
-    if (!plantDetails || !firestore) {
-        console.warn("[EmailJS] Plant details or Firestore not available for notification.");
+    if (!plantDetails || !firestore || !plantId ) {
+        console.warn("[EmailJS] Missing plantDetails, plantId, or firestore for sending consolidated notification.");
         return;
     }
+
     const now = Date.now();
-    const cooldownKeyForPlantAlert = `${plantId}_${internalAlertType}`;
-    // @ts-ignore
-    const lastSent = notificationCooldowns.current[cooldownKeyForPlantAlert];
-    if (lastSent && (now - lastSent < COOLDOWN_PERIOD_MS)) {
-        console.log(`[EmailJS] Cooldown active for ${internalAlertType} on plant ${plantId}.`);
+    const cooldownKeyForPlant = `${PLANT_ALERT_COOLDOWN_KEY_PREFIX}${plantId}`;
+    // @ts-ignore 
+    const lastSentTimestamp = plantAlertCooldowns.current[cooldownKeyForPlant];
+
+    if (lastSentTimestamp && (now - lastSentTimestamp < PLANT_ALERT_COOLDOWN_PERIOD_MS)) {
+        console.log(`[EmailJS] Consolidated alert cooldown active for plant ${plantDetails.name} (${plantId}). Last sent: ${new Date(lastSentTimestamp).toLocaleTimeString()}`);
         return;
     }
+
     const serviceId = process.env.NEXT_PUBLIC_EMAILJS_SERVICE_ID;
-    const templateId = process.env.NEXT_PUBLIC_EMAILJS_TEMPLATE_ID;
+    const templateId = process.env.NEXT_PUBLIC_EMAILJS_TEMPLATE_ID_CONSOLIDATED || process.env.NEXT_PUBLIC_EMAILJS_TEMPLATE_ID;
     const publicKey = process.env.NEXT_PUBLIC_EMAILJS_PUBLIC_KEY;
+
     if (!serviceId || !templateId || !publicKey) {
-        console.error("[EmailJS] Credentials missing in .env.local");
-        setEmailError("Email service not configured correctly.");
+        console.error("[EmailJS] EmailJS credentials missing or incomplete in .env.local.");
+        setEmailError("Email service not configured correctly for consolidated alerts.");
         return;
     }
-    const descriptiveAlertType = alertTypeMapping[internalAlertType] || internalAlertType;
+
     try {
         const usersCollectionRef = collection(firestore, 'users');
         const usersSnapshot = await getDocs(usersCollectionRef);
+
         if (usersSnapshot.empty) {
-            console.warn("[EmailJS] No users found in 'users' collection.");
+            console.warn("[EmailJS] No users found in 'users' collection to notify.");
+            setEmailError("No users configured to receive notifications.");
             return;
         }
-        console.log(`[EmailJS] Alert: ${descriptiveAlertType} for Plant: ${plantDetails.name}. Current: ${currentValue}, Threshold: ${thresholdValue}. Attempting to notify ${usersSnapshot.size} users.`);
+        
+        console.log(`[EmailJS] Alert: ${alertTitle} for Plant: ${plantDetails.name}. Attempting to notify ${usersSnapshot.size} users.`);
         let emailsSentCount = 0;
+        let anyEmailFailed = false;
+
         for (const userDoc of usersSnapshot.docs) {
             const userData = userDoc.data();
-            const recipientEmail = userData.email;
+            const recipientEmail = userData.email; 
             const recipientName = userData.displayName || 'User';
+
             if (recipientEmail && typeof recipientEmail === 'string' && recipientEmail.trim() !== '') {
                 const templateParams = {
-                    plant_name: plantDetails.name, alert_type: descriptiveAlertType, current_value: String(currentValue),
-                    threshold_value: String(thresholdValue ?? 'N/A'), email: recipientEmail,
-                    user_name: recipientName, plant_link: `${window.location.origin}/plants/${plantId}`
+                    plant_name: plantDetails.name,
+                    alert_title: alertTitle, 
+                    alert_details: consolidatedAlertDetails,
+                    email: recipientEmail, 
+                    user_name: recipientName,
+                    plant_link: `${window.location.origin}/plants/${plantId}`
                 };
-                console.log(`[EmailJS] Preparing to send to: ${recipientEmail} with params:`, JSON.stringify(templateParams));
+                
                 try {
                     await emailjs.send(serviceId, templateId, templateParams, publicKey);
-                    console.log(`[EmailJS] Notification sent to ${recipientEmail} for ${descriptiveAlertType}`);
                     emailsSentCount++;
-                } catch (emailError: any) {
-                    console.error(`[EmailJS] Failed to send to ${recipientEmail}:`, emailError.status, emailError.text);
-                    setEmailError(prev => prev ? `${prev}, Failed for ${recipientEmail}` : `Failed for ${recipientEmail}: ${emailError.text || 'Unknown EmailJS error'}`);
+                } catch (emailSendError: any) {
+                    console.error(`[EmailJS] Failed to send consolidated alert to ${recipientEmail}:`, emailSendError.status, emailSendError.text);
+                    anyEmailFailed = true;
                 }
             } else {
-                console.warn(`[EmailJS] User document ${userDoc.id} missing valid email.`);
+                console.warn(`[EmailJS] User document ${userDoc.id} missing valid email. Notification not sent to this user.`);
             }
         }
+
         if (emailsSentCount > 0) {
-            // @ts-ignore
-            notificationCooldowns.current[cooldownKeyForPlantAlert] = now;
-            console.log(`[EmailJS] Attempted to send ${emailsSentCount} emails for ${descriptiveAlertType} on plant ${plantId}.`);
+            // @ts-ignore 
+            plantAlertCooldowns.current[cooldownKeyForPlant] = now; 
+            console.log(`[EmailJS] Attempted to send ${emailsSentCount} consolidated alert emails for plant ${plantDetails.name}.`);
+            if(anyEmailFailed) {
+                 setEmailError(prev => `${prev ? prev + '; ' : ''}Some email notifications failed. Check console.`);
+            }
         } else {
-            console.warn(`[EmailJS] No emails sent for ${descriptiveAlertType} on plant ${plantId}.`);
-            if (!emailError) { setEmailError("No valid recipients found or all email attempts failed."); }
+            console.warn(`[EmailJS] No emails were successfully sent for the consolidated alert on plant ${plantDetails.name}.`);
+            if (!emailError && !anyEmailFailed) { 
+                setEmailError("No valid recipients found or all email attempts failed.");
+            } else if (anyEmailFailed && !emailError) { 
+                 setEmailError("Some email notifications failed. Check console for details.");
+            }
         }
+
     } catch (fetchUsersError: any) {
         console.error("[EmailJS] Error fetching users for notification:", fetchUsersError);
         setEmailError("Failed to fetch user list for notifications.");
     }
   }, [plantDetails, plantId, firestore]);
 
+  // useEffect for collecting discrepancies and sending ONE consolidated email
   useEffect(() => {
-    if (!isSensorHistoryLoading && !isLifecycleLoading && latestReading && currentStageRequirements && plantDetails) {
-        if (environmentStatus.temp?.status === 'Low') sendEmailNotification('tempLow', latestReading.temperature ?? 'N/A', currentStageRequirements.minTempC);
-        if (environmentStatus.temp?.status === 'High') sendEmailNotification('tempHigh', latestReading.temperature ?? 'N/A', currentStageRequirements.maxTempC);
-        if (environmentStatus.humidity?.status === 'Low') sendEmailNotification('humidityLow', latestReading.humidity ?? 'N/A', currentStageRequirements.minHumidityPercent);
-        if (environmentStatus.humidity?.status === 'High') sendEmailNotification('humidityHigh', latestReading.humidity ?? 'N/A', currentStageRequirements.maxHumidityPercent);
-        if (environmentStatus.ph?.status === 'Low') sendEmailNotification('phLow', latestReading.ph ?? 'N/A', currentStageRequirements.minPH);
-        if (environmentStatus.ph?.status === 'High') sendEmailNotification('phHigh', latestReading.ph ?? 'N/A', currentStageRequirements.maxPH);
-        if (environmentStatus.ec?.status === 'Low') sendEmailNotification('ecLow', latestReading.ec ?? 'N/A', currentStageRequirements.minEC_mS_cm);
-        if (environmentStatus.ec?.status === 'High') sendEmailNotification('ecHigh', latestReading.ec ?? 'N/A', currentStageRequirements.maxEC_mS_cm);
-        if (npkStatus.n.status === 'Low') sendEmailNotification('nLow', latestReading.nitrogen ?? 'N/A', currentStageRequirements.minN);
-        if (npkStatus.n.status === 'High') sendEmailNotification('nHigh', latestReading.nitrogen ?? 'N/A', currentStageRequirements.maxN);
-        if (npkStatus.p.status === 'Low') sendEmailNotification('pLow', latestReading.phosphorus ?? 'N/A', currentStageRequirements.minP);
-        if (npkStatus.p.status === 'High') sendEmailNotification('pHigh', latestReading.phosphorus ?? 'N/A', currentStageRequirements.maxP);
-        if (npkStatus.k.status === 'Low') sendEmailNotification('kLow', latestReading.potassium ?? 'N/A', currentStageRequirements.minK);
-        if (npkStatus.k.status === 'High') sendEmailNotification('kHigh', latestReading.potassium ?? 'N/A', currentStageRequirements.maxK);
+    if (!isSensorHistoryLoading && !isLifecycleLoading && latestReading && currentStageRequirements && plantDetails && !isLoading && user) {
+        const discrepancyMessages: string[] = [];
+        const plantName = plantDetails.name;
+
+        const formatDiscrepancy = (param: string, status: string, current?: number | string, targetMin?: number | string, targetMax?: number | string) => {
+            let message = `${param} is ${status}. Current: ${current ?? 'N/A'}.`;
+            if (targetMin !== undefined && targetMax !== undefined) { message += ` Target: ${targetMin}-${targetMax}.`; }
+            else if (targetMin !== undefined) { message += ` Target: >= ${targetMin}.`; }
+            else if (targetMax !== undefined) { message += ` Target: <= ${targetMax}.`; }
+            return message;
+        };
+
+        if (environmentStatus.temp?.status === 'Low') discrepancyMessages.push(formatDiscrepancy('Temperature', 'Low', latestReading.temperature?.toFixed(1), currentStageRequirements.minTempC?.toFixed(1), currentStageRequirements.maxTempC?.toFixed(1)));
+        if (environmentStatus.temp?.status === 'High') discrepancyMessages.push(formatDiscrepancy('Temperature', 'High', latestReading.temperature?.toFixed(1), currentStageRequirements.minTempC?.toFixed(1), currentStageRequirements.maxTempC?.toFixed(1)));
+        if (environmentStatus.humidity?.status === 'Low') discrepancyMessages.push(formatDiscrepancy('Humidity', 'Low', latestReading.humidity?.toFixed(0), currentStageRequirements.minHumidityPercent?.toFixed(0), currentStageRequirements.maxHumidityPercent?.toFixed(0)));
+        if (environmentStatus.humidity?.status === 'High') discrepancyMessages.push(formatDiscrepancy('Humidity', 'High', latestReading.humidity?.toFixed(0), currentStageRequirements.minHumidityPercent?.toFixed(0), currentStageRequirements.maxHumidityPercent?.toFixed(0)));
+        if (environmentStatus.ph?.status === 'Low') discrepancyMessages.push(formatDiscrepancy('pH', 'Low', latestReading.ph?.toFixed(1), currentStageRequirements.minPH?.toFixed(1), currentStageRequirements.maxPH?.toFixed(1)));
+        if (environmentStatus.ph?.status === 'High') discrepancyMessages.push(formatDiscrepancy('pH', 'High', latestReading.ph?.toFixed(1), currentStageRequirements.minPH?.toFixed(1), currentStageRequirements.maxPH?.toFixed(1)));
+        if (environmentStatus.ec?.status === 'Low') discrepancyMessages.push(formatDiscrepancy('EC', 'Low', latestReading.ec?.toFixed(1), currentStageRequirements.minEC_mS_cm?.toFixed(1), currentStageRequirements.maxEC_mS_cm?.toFixed(1)));
+        if (environmentStatus.ec?.status === 'High') discrepancyMessages.push(formatDiscrepancy('EC', 'High', latestReading.ec?.toFixed(1), currentStageRequirements.minEC_mS_cm?.toFixed(1), currentStageRequirements.maxEC_mS_cm?.toFixed(1)));
+        if (npkStatus.n.status === 'Low') discrepancyMessages.push(formatDiscrepancy('Nitrogen (N)', 'Low', latestReading.nitrogen?.toFixed(0), currentStageRequirements.minN?.toFixed(0), currentStageRequirements.maxN?.toFixed(0)));
+        if (npkStatus.n.status === 'High') discrepancyMessages.push(formatDiscrepancy('Nitrogen (N)', 'High', latestReading.nitrogen?.toFixed(0), currentStageRequirements.minN?.toFixed(0), currentStageRequirements.maxN?.toFixed(0)));
+        if (npkStatus.p.status === 'Low') discrepancyMessages.push(formatDiscrepancy('Phosphorus (P)', 'Low', latestReading.phosphorus?.toFixed(0), currentStageRequirements.minP?.toFixed(0), currentStageRequirements.maxP?.toFixed(0)));
+        if (npkStatus.p.status === 'High') discrepancyMessages.push(formatDiscrepancy('Phosphorus (P)', 'High', latestReading.phosphorus?.toFixed(0), currentStageRequirements.minP?.toFixed(0), currentStageRequirements.maxP?.toFixed(0)));
+        if (npkStatus.k.status === 'Low') discrepancyMessages.push(formatDiscrepancy('Potassium (K)', 'Low', latestReading.potassium?.toFixed(0), currentStageRequirements.minK?.toFixed(0), currentStageRequirements.maxK?.toFixed(0)));
+        if (npkStatus.k.status === 'High') discrepancyMessages.push(formatDiscrepancy('Potassium (K)', 'High', latestReading.potassium?.toFixed(0), currentStageRequirements.minK?.toFixed(0), currentStageRequirements.maxK?.toFixed(0)));
+
+        if (discrepancyMessages.length > 0) {
+            const consolidatedMessage = `The following issues were detected for plant "${plantName}":\n- ${discrepancyMessages.join('\n- ')}`;
+            sendConsolidatedEmailNotification("Plant Health Alert", consolidatedMessage);
+        }
     }
-  }, [latestReading, currentStageRequirements, environmentStatus, npkStatus, isSensorHistoryLoading, isLifecycleLoading, plantDetails, sendEmailNotification]);
+  }, [latestReading, currentStageRequirements, environmentStatus, npkStatus, isSensorHistoryLoading, isLifecycleLoading, plantDetails, isLoading, user, sendConsolidatedEmailNotification]);
 
-
+  // --- Callback Handlers ---
   const handleAddSensorReadingSubmit = async (data: SensorReadingData) => {
-    if (!user || !firestore || !plantId) {
-        console.error("User, Firestore, or Plant ID is not available for adding sensor reading.");
-        throw new Error("Cannot save sensor reading: missing critical information.");
-    }
-    const readingDataToSave: any = {
-        plantId: plantId,
-        userId: user.uid,
-        timestamp: serverTimestamp(),
-    };
+    if (!user || !firestore || !plantId) { throw new Error("Cannot save sensor reading: critical information missing."); }
+    const readingDataToSave: any = { plantId: plantId, userId: user.uid, timestamp: serverTimestamp() };
     (Object.keys(data) as Array<keyof SensorReadingData>).forEach(key => {
         const value = data[key];
-        if (key === 'notes' && typeof value === 'string' && value.trim() !== '') {
-            readingDataToSave[key] = value.trim();
-        } else if (typeof value === 'string' && value.trim() !== '' && key !== 'notes') {
-            const numValue = parseFloat(value);
-            if (!isNaN(numValue)) { readingDataToSave[key] = numValue; }
+        if (key === 'notes' && typeof value === 'string' && value.trim() !== '') { readingDataToSave[key] = value.trim(); }
+        else if (typeof value === 'string' && value.trim() !== '' && key !== 'notes') {
+            const numValue = parseFloat(value); if (!isNaN(numValue)) { readingDataToSave[key] = numValue; }
         } else if (typeof value === 'number' && !isNaN(value)) { readingDataToSave[key] = value; }
     });
     const numericKeys: (keyof SensorReadingData)[] = ['temperature', 'humidity', 'ph', 'ec', 'nitrogen', 'phosphorus', 'potassium'];
     const numericValuesPresent = numericKeys.some(key => typeof readingDataToSave[key] === 'number');
-    if (!numericValuesPresent && !readingDataToSave.notes) {
-        throw new Error("At least one sensor value or a note must be provided.");
-    }
+    if (!numericValuesPresent && !readingDataToSave.notes) { throw new Error("At least one sensor value or a note must be provided."); }
     try {
         const sensorReadingsCollectionRef = collection(firestore, 'sensorReadings');
         const newReadingDocRef = await addDoc(sensorReadingsCollectionRef, readingDataToSave);
         const newReadingForState: SensorReading = {
-            id: newReadingDocRef.id, timestamp: new Date(),
+            id: newReadingDocRef.id, timestamp: new Date(), 
             temperature: readingDataToSave.temperature, humidity: readingDataToSave.humidity,
             ph: readingDataToSave.ph, ec: readingDataToSave.ec,
             nitrogen: readingDataToSave.nitrogen, phosphorus: readingDataToSave.phosphorus,
@@ -706,15 +729,85 @@ export default function PlantDetailPage() {
         };
         setSensorHistory(prev => [newReadingForState, ...prev].sort((a,b) => b.timestamp.getTime() - a.timestamp.getTime()));
         setIsAddSensorModalOpen(false);
-    } catch (error) {
-        console.error("Error adding sensor reading to Firestore:", error);
-        if (error instanceof Error) { throw new Error(`Failed to save sensor reading: ${error.message}`); }
-        throw new Error("An unknown error occurred while saving sensor reading.");
+    } catch (error) { console.error("Error adding sensor reading:", error); if (error instanceof Error) { throw new Error(`Failed to save sensor reading: ${error.message}`); } throw new Error("Unknown error saving sensor reading."); }
+  };
+
+  // This function is called when an item is selected in SelectItemForUsageModal
+  // It should then open the UseItemModal (if that's a separate modal for quantity/notes)
+  const handleItemSelectedForUsage = (item: SelectableInventoryItem) => {
+    // If SelectItemForUsageModal is now the one that takes quantity and notes,
+    // this function might not be needed, or its role changes.
+    // For the original two-modal flow:
+    // setItemToUseForCost(item as InventoryItem); 
+    // setIsUseItemForCostModalOpen(true); 
+    setIsSelectItemModalOpen(false); // Close the item selection modal
+  };
+
+  // This function would be called by UseItemModal or the integrated SelectItemForUsageModal
+  const handleUseItemForCostSubmit = async (item: InventoryItem, quantityUsed: number, notes?: string) => {
+    if (!user || !firestore || !plantId || !plantDetails) { throw new Error("Cannot record item usage: critical information missing.");}
+    if (quantityUsed <= 0) throw new Error("Quantity used must be positive.");
+
+    const itemDocRef = doc(firestore, 'inventory', item.id);
+    let logType: InventoryLogEntry['type'] = 'Material Used';
+    if (item.category === 'fertilizers') logType = 'Fertilizer Used';
+    else if (item.category === 'seeds') logType = 'Seed Planted'; // This case is less likely if seeds are filtered out
+
+    try {
+      await runTransaction(firestore, async (transaction) => {
+        const itemDocSnap = await transaction.get(itemDocRef);
+        if (!itemDocSnap.exists()) { throw new Error("Inventory item not found in database."); }
+        const currentData = itemDocSnap.data();
+        const currentStock = Number(currentData.stock) || 0;
+        if (quantityUsed > currentStock) {
+          throw new Error(`Not enough stock. Only ${currentStock} ${item.unit || 'units'} of ${item.name} available. Requested ${quantityUsed}.`);
+        }
+        transaction.update(itemDocRef, { stock: increment(-quantityUsed), lastUpdated: serverTimestamp() });
+        
+        const logCollectionRef = collection(firestore, 'inventory_log');
+        const logEntryRef = doc(logCollectionRef);
+        const logDataForWrite: Omit<InventoryLogEntry, 'id' | 'timestamp'> & {timestamp: any} = {
+          itemId: item.id, itemName: item.name, timestamp: serverTimestamp(), type: logType,
+          quantityChange: -quantityUsed, costOrValuePerUnit: item.pricePerUnit,
+          totalCostOrValue: Math.abs(-quantityUsed) * item.pricePerUnit,
+          notes: notes || `${logType} for plant: ${plantDetails.name}`,
+          userId: user.uid, plantId: plantId, unit: item.unit,
+        };
+        transaction.set(logEntryRef, logDataForWrite);
+      });
+
+      // Optimistic UI update for Cost Logs
+      const newLogForUI: InventoryLogEntry = {
+          id: 'temp-' + Date.now(), 
+          itemId: item.id, itemName: item.name, timestamp: new Date(), type: logType,
+          quantityChange: -quantityUsed, costOrValuePerUnit: item.pricePerUnit,
+          totalCostOrValue: Math.abs(-quantityUsed) * item.pricePerUnit,
+          notes: notes || `${logType} for plant: ${plantDetails.name}`,
+          userId: user.uid, plantId: plantId, unit: item.unit,
+      };
+      setCostLogs(prev => [newLogForUI, ...prev].sort((a,b) => b.timestamp.getTime() - a.timestamp.getTime()));
+      
+      // Optimistic UI update for the main inventory list (allInventoryItems)
+      setAllInventoryItems(prevItems =>
+        prevItems.map(invItem =>
+          invItem.id === item.id 
+            ? { ...invItem, stock: invItem.stock - quantityUsed, lastUpdated: new Date() } 
+            : invItem
+        ).filter(invItem => invItem.stock > 0) 
+      );
+      
+      // If UseItemModal was a separate modal, close it here
+      // setIsUseItemForCostModalOpen(false);
+      // setItemToUseForCost(null);
+    } catch (error: any) { 
+      console.error("Error processing item usage:", error); 
+      throw new Error(error.message || "Failed to record item usage. Please try again."); 
     }
   };
 
+  // --- Render Logic ---
   if (loadingAuth) { return <LoadingSpinner message="Authenticating..." />; }
-  if (!user && !errorAuth) {
+  if (!user && !errorAuth) { 
     return (
         <div className="flex flex-col items-center justify-center min-h-screen bg-gray-100 p-4 text-center">
             <div className="bg-white p-8 md:p-12 rounded-xl shadow-2xl max-w-md w-full">
@@ -739,10 +832,12 @@ export default function PlantDetailPage() {
         </div>
      );
   }
-  if (isLoading || (isLifecycleLoading && !plantLifecycleData && plantDetails) || (isSettingsLoading && Object.keys(userSettings).length === 0 && plantDetails) ) {
-      return <LoadingSpinner message={ isLoading ? "Loading Plant Details..." : isLifecycleLoading ? "Loading Plant Config..." : isSettingsLoading ? "Loading User Settings..." : "Loading data..."} />;
+  
+  if (isLoading && !plantDetails) { 
+      return <LoadingSpinner message={"Loading Plant Details..."} />;
   }
-  if (error && !isLoading) {
+
+  if (error && !isLoading) { 
       return (
           <div className="flex h-screen bg-gray-100">
               <Sidebar />
@@ -755,8 +850,19 @@ export default function PlantDetailPage() {
           </div>
       );
   }
+  
   if (!plantDetails && !isLoading && !error) {
-      return <LoadingSpinner message="Plant data not found or initializing..." />;
+      return (
+        <div className="flex h-screen bg-gray-100">
+            <Sidebar />
+            <main className="flex-1 p-8 flex flex-col items-center justify-center text-center">
+                <AlertTriangle className="h-16 w-16 text-yellow-500 mb-4" />
+                <h2 className="text-2xl font-semibold text-yellow-700 mb-2">Plant Not Found</h2>
+                <p className="text-gray-600 mb-6">The requested plant data could not be found or you may not have permission to view it.</p>
+                <Link href="/dashboard" className="px-6 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors">Go to Dashboard</Link>
+            </main>
+        </div>
+      );
   }
 
   return (
@@ -764,51 +870,55 @@ export default function PlantDetailPage() {
       <Sidebar />
       <div className="flex-1 flex flex-col overflow-hidden">
         <header className="bg-white shadow-sm relative z-10 border-b">
-          <div className="max-w-full mx-auto px-4 sm:px-6 lg:px-8">
-            <div className="flex justify-between items-center h-16">
-              <div className="flex items-center">
-                <h1 className="text-xl font-semibold text-gray-800 flex items-center">
-                  <Leaf className="h-6 w-6 mr-2 text-green-600" />
-                  Plant Details: {plantDetails?.name ?? 'Loading...'}
-                </h1>
+            <div className="max-w-full mx-auto px-4 sm:px-6 lg:px-8">
+              <div className="flex justify-between items-center h-16">
+                <div className="flex items-center">
+                  <h1 className="text-xl font-semibold text-gray-800 flex items-center">
+                    <Leaf className="h-6 w-6 mr-2 text-green-600" />
+                    Plant Details: {plantDetails?.name ?? 'Loading...'}
+                  </h1>
+                </div>
               </div>
             </div>
-          </div>
         </header>
 
         <main className="flex-1 overflow-y-auto p-6 lg:p-8 relative">
-          {(lifecycleError || settingsError || sensorHistoryError || plantEventsError || costError || fertilizersError || emailError) && (
+          {(lifecycleError || settingsError || sensorHistoryError || plantEventsError || costError || inventoryError || emailError) && (
               <div className="mb-4 text-sm text-red-700 bg-red-100 p-3 rounded-md border border-red-200" role="alert">
-                  <AlertTriangle size={16} className="inline mr-1.5 align-text-bottom"/>
-                  <strong>Data Loading Issues:</strong>
-                  {lifecycleError && <p>- Plant Config: {lifecycleError}</p>}
-                  {settingsError && <p>- User Settings: {settingsError}</p>}
-                  {sensorHistoryError && <p>- Sensor Data: {sensorHistoryError}</p>}
-                  {plantEventsError && <p>- Events: {plantEventsError}</p>}
-                  {costError && <p>- Costs: {costError}</p>}
-                  {fertilizersError && <p>- Fertilizers: {fertilizersError}</p>}
-                  {emailError && <p>- Email Service: {emailError}</p>}
+                  <div className="flex items-center">
+                    <AlertTriangle size={18} className="mr-2 flex-shrink-0"/>
+                    <strong className="font-semibold">Data Loading or Notification Issues:</strong>
+                  </div>
+                  <ul className="mt-1 list-disc list-inside text-xs">
+                    {lifecycleError && <li>Plant Config: {lifecycleError}</li>}
+                    {settingsError && <li>User Settings: {settingsError}</li>}
+                    {sensorHistoryError && <li>Sensor Data: {sensorHistoryError}</li>}
+                    {plantEventsError && <li>Events: {plantEventsError}</li>}
+                    {costError && <li>Costs: {costError}</li>}
+                    {inventoryError && <li>Inventory Data: {inventoryError}</li>}
+                    {emailError && <li>Email Service: {emailError}</li>}
+                  </ul>
               </div>
           )}
 
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 xl:gap-8">
             <div className="lg:col-span-1 space-y-6">
               <div className="bg-white rounded-lg shadow p-4">
                 <h2 className="text-lg font-semibold text-gray-700 mb-3">Image</h2>
-                <div className="w-full aspect-square relative bg-gray-200 rounded flex items-center justify-center text-gray-400 overflow-hidden">
-                  {isImageLoading ? ( <Loader2 size={40} className="animate-spin text-gray-500" /> )
-                   : imageData ? ( <img src={imageData} alt={plantDetails?.name} className="absolute inset-0 w-full h-full object-cover" /> )
-                   : plantDetails?.imageUrl && plantDetails.imageUrl.startsWith('http') ? ( <img src={plantDetails.imageUrl} alt={plantDetails?.name} className="absolute inset-0 w-full h-full object-cover" /> )
-                   : ( <ImageOff size={48} /> )}
+                <div className="w-full h-48 sm:h-56 md:h-64 relative bg-gray-200 rounded flex items-center justify-center text-gray-400 overflow-hidden">
+                    {isImageLoading ? ( <Loader2 size={32} className="animate-spin text-gray-500" /> )
+                    : imageData ? ( <img src={imageData} alt={plantDetails?.name} className="absolute inset-0 w-full h-full object-cover" /> )
+                    : plantDetails?.imageUrl && plantDetails.imageUrl.startsWith('http') ? ( <img src={plantDetails.imageUrl} alt={plantDetails?.name} className="absolute inset-0 w-full h-full object-cover" /> )
+                    : ( <div className="flex flex-col items-center"><ImageOff size={40} /><span className="text-xs mt-1">No image</span></div> )}
                 </div>
               </div>
               <div className="bg-white rounded-lg shadow p-4">
-                <h2 className="text-lg font-semibold text-gray-700 mb-3">Details</h2>
+                <h2 className="text-lg font-semibold text-gray-700 mb-3">Plant Information</h2>
                 <dl className="space-y-2 text-sm">
                     <div className="flex justify-between"><dt className="text-gray-500">Name:</dt><dd className="text-gray-800 font-medium">{plantDetails?.name}</dd></div>
                     <div className="flex justify-between"><dt className="text-gray-500">Type:</dt><dd className="text-gray-800">{plantDetails?.type}</dd></div>
                     <div className="flex justify-between"><dt className="text-gray-500">Status:</dt><dd className="text-gray-800">{plantDetails?.status}</dd></div>
-                    <div className="flex justify-between"><dt className="text-gray-500">Date Planted:</dt><dd className="text-gray-800">{plantDetails?.datePlanted?.toLocaleDateString() ?? 'N/A'}</dd></div>
+                    <div className="flex justify-between"><dt className="text-gray-500">Date Planted:</dt><dd className="text-gray-800">{plantDetails?.datePlanted?.toLocaleDateString('en-CA') ?? 'N/A'}</dd></div>
                     {plantDetails?.locationZone && <div className="flex justify-between"><dt className="text-gray-500">Zone:</dt><dd className="text-gray-800">{plantDetails.locationZone}</dd></div>}
                     {plantDetails?.seedId && <div className="flex justify-between"><dt className="text-gray-500">Seed Ref:</dt><dd className="text-gray-800 text-xs truncate" title={plantDetails.seedId}>{plantDetails.seedId}</dd></div>}
                     {plantDetails?.initialSeedQuantity !== undefined && <div className="flex justify-between"><dt className="text-gray-500">Seeds Planted:</dt><dd className="text-gray-800">{plantDetails.initialSeedQuantity}</dd></div>}
@@ -819,10 +929,10 @@ export default function PlantDetailPage() {
                 {isCostLoading || isSettingsLoading ? ( <div className="flex items-center justify-center text-gray-500 py-4"><Loader2 className="h-5 w-5 animate-spin mr-2" /> Loading financial data...</div> )
                 : costError || settingsError ? ( <div className="text-sm text-red-600 text-center py-4">{costError || settingsError}</div> )
                 : ( <dl className="space-y-2 text-sm">
-                      <div className="flex justify-between"> <dt className="text-gray-500">Total Production Cost:</dt> <dd className="text-gray-800 font-medium">{formatCurrency(totalCost, false)}</dd> </div>
+                      <div className="flex justify-between"> <dt className="text-gray-500">Total Production Cost:</dt> <dd className="text-gray-800 font-medium">{formatCurrency(totalCost, true)}</dd> </div>
                       {totalRevenue > 0 && ( <> <div className="flex justify-between"> <dt className="text-gray-500">Total Revenue (Sales):</dt> <dd className="text-green-600 font-medium">{formatCurrency(totalRevenue)}</dd> </div> <div className="flex justify-between border-t pt-2 mt-2"> <dt className="text-gray-500 font-semibold">Net Profit/Loss:</dt> <dd className={`font-bold ${totalRevenue - totalCost >= 0 ? 'text-green-700' : 'text-red-600'}`}> {formatCurrency(totalRevenue - totalCost)} </dd> </div> </> )}
-                      <div className="flex justify-between border-t pt-2 mt-2"> <dt className="text-gray-500">Suggested Sell Price:</dt> <dd className="text-blue-600 font-semibold">{suggestedPrice !== null ? formatCurrency(suggestedPrice) : 'N/A'}</dd> </div>
-                      <p className="text-xs text-gray-400 text-right">(Based on {((userSettings.defaultProfitMargin ?? 0.2) * 100).toFixed(0)}% margin)</p>
+                      <div className="flex justify-between border-t pt-2 mt-2"> <dt className="text-gray-500">Suggested Sell Price:</dt> <dd className="text-blue-600 font-semibold">{suggestedPrice !== null ? formatCurrency(suggestedPrice) : (totalCost > 0 ? 'Margin not set' : 'N/A')}</dd> </div>
+                      {totalCost > 0 && <p className="text-xs text-gray-400 text-right">(Based on {((userSettings.defaultProfitMargin ?? 0.2) * 100).toFixed(0)}% margin)</p>}
                     </dl>
                 )}
               </div>
@@ -840,8 +950,7 @@ export default function PlantDetailPage() {
                 </div>
 
                 <div className="p-6 min-h-[400px]">
-                  {activeDetailTab === 'Status' && (
-                    <div className="space-y-6">
+                  {activeDetailTab === 'Status' && ( <div className="space-y-6">
                         <div>
                             <h3 className="text-md font-semibold text-gray-700 mb-3">Latest Sensor Readings</h3>
                             {isSensorHistoryLoading ? <div className="text-center py-4"><Loader2 className="h-5 w-5 animate-spin inline-block text-gray-400"/></div>
@@ -867,8 +976,8 @@ export default function PlantDetailPage() {
                         </div>
                         <div>
                             <h3 className="text-md font-semibold text-gray-700 mt-4 mb-3 pt-4 border-t">Recommendations & Status</h3>
-                            {isSensorHistoryLoading || isLifecycleLoading || isFertilizersLoading || !plantDetails ? ( <div className="text-center py-4"><Loader2 className="h-5 w-5 animate-spin inline-block text-gray-400"/> Loading status...</div> )
-                            : sensorHistoryError || lifecycleError || fertilizersError ? ( <p className="text-red-600 text-sm">{sensorHistoryError || lifecycleError || fertilizersError}</p> )
+                            {isSensorHistoryLoading || isLifecycleLoading || isInventoryLoading || !plantDetails ? ( <div className="text-center py-4"><Loader2 className="h-5 w-5 animate-spin inline-block text-gray-400"/> Loading status...</div> )
+                            : sensorHistoryError || lifecycleError || inventoryError ? ( <p className="text-red-600 text-sm">{sensorHistoryError || lifecycleError || inventoryError}</p> )
                             : !latestReading ? ( <p className="text-sm text-gray-500">No sensor data for status.</p> )
                             : !currentStageRequirements ? ( <p className="text-sm text-gray-500">Plant stage or configuration missing for status.</p> )
                             : (
@@ -877,26 +986,19 @@ export default function PlantDetailPage() {
                                     <div>
                                         <p className="text-sm font-medium text-gray-700 mb-1">Environment:</p>
                                         <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-center text-xs">
-                                            {environmentStatus.temp && <div className={`p-1.5 rounded ${environmentStatus.temp.color.replace('text-', 'bg-').replace('-600', '-100')}`}> <p className="font-semibold text-gray-900">Temp</p> <p className={environmentStatus.temp.color}>{environmentStatus.temp.status}</p> </div>}
-                                            {environmentStatus.humidity && <div className={`p-1.5 rounded ${environmentStatus.humidity.color.replace('text-', 'bg-').replace('-600', '-100')}`}> <p className="font-semibold text-gray-900">Humidity</p> <p className={environmentStatus.humidity.color}>{environmentStatus.humidity.status}</p> </div>}
-                                            {environmentStatus.ph && <div className={`p-1.5 rounded ${environmentStatus.ph.color.replace('text-', 'bg-').replace('-600', '-100')}`}> <p className="font-semibold text-gray-900">pH</p> <p className={environmentStatus.ph.color}>{environmentStatus.ph.status}</p> </div>}
-                                            {environmentStatus.ec && <div className={`p-1.5 rounded ${environmentStatus.ec.color.replace('text-', 'bg-').replace('-600', '-100')}`}> <p className="font-semibold text-gray-900">EC</p> <p className={environmentStatus.ec.color}>{environmentStatus.ec.status}</p> </div>}
+                                          {environmentStatus.temp && <div className={`p-1.5 rounded ${environmentStatus.temp.color.replace('text-', 'bg-').replace('-600', '-100').replace('-700', '-100').replace('-500', '-50')}`}> <p className="font-semibold text-gray-900">Temp</p> <p className={environmentStatus.temp.color}>{environmentStatus.temp.status}</p> </div>}
+                                          {environmentStatus.humidity && <div className={`p-1.5 rounded ${environmentStatus.humidity.color.replace('text-', 'bg-').replace('-600', '-100').replace('-700', '-100').replace('-500', '-50')}`}> <p className="font-semibold text-gray-900">Humidity</p> <p className={environmentStatus.humidity.color}>{environmentStatus.humidity.status}</p> </div>}
+                                          {environmentStatus.ph && <div className={`p-1.5 rounded ${environmentStatus.ph.color.replace('text-', 'bg-').replace('-600', '-100').replace('-700', '-100').replace('-500', '-50')}`}> <p className="font-semibold text-gray-900">pH</p> <p className={environmentStatus.ph.color}>{environmentStatus.ph.status}</p> </div>}
+                                          {environmentStatus.ec && <div className={`p-1.5 rounded ${environmentStatus.ec.color.replace('text-', 'bg-').replace('-600', '-100').replace('-700', '-100').replace('-500', '-50')}`}> <p className="font-semibold text-gray-900">EC</p> <p className={environmentStatus.ec.color}>{environmentStatus.ec.status}</p> </div>}
                                         </div>
-                                        {environmentStatus.temp?.status === 'Low' && <p className="text-xs text-orange-600 mt-1 flex items-center"><AlertCircle size={14} className="mr-1"/> Consider increasing temperature.</p>}
-                                        {environmentStatus.temp?.status === 'High' && <p className="text-xs text-red-600 mt-1 flex items-center"><AlertCircle size={14} className="mr-1"/> Consider decreasing temperature.</p>}
-                                        {environmentStatus.humidity?.status === 'Low' && <p className="text-xs text-orange-600 mt-1 flex items-center"><AlertCircle size={14} className="mr-1"/> Consider increasing humidity.</p>}
-                                        {environmentStatus.humidity?.status === 'High' && <p className="text-xs text-red-600 mt-1 flex items-center"><AlertCircle size={14} className="mr-1"/> Consider decreasing humidity/increasing ventilation.</p>}
-                                        {environmentStatus.ph?.status === 'Low' && <p className="text-xs text-orange-600 mt-1 flex items-center"><AlertCircle size={14} className="mr-1"/> pH is low, consider adjusting upwards.</p>}
-                                        {environmentStatus.ph?.status === 'High' && <p className="text-xs text-red-600 mt-1 flex items-center"><AlertCircle size={14} className="mr-1"/> pH is high, consider adjusting downwards.</p>}
-                                        {environmentStatus.ec?.status === 'Low' && <p className="text-xs text-orange-600 mt-1 flex items-center"><AlertCircle size={14} className="mr-1"/> EC is low, consider increasing nutrient concentration.</p>}
-                                        {environmentStatus.ec?.status === 'High' && <p className="text-xs text-red-600 mt-1 flex items-center"><AlertCircle size={14} className="mr-1"/> EC is high, consider diluting nutrient solution or flushing.</p>}
+                                        {/* Environment advice messages */}
                                     </div>
                                     <div>
                                         <p className="text-sm font-medium text-gray-700 mb-1 mt-3">Nutrients (NPK):</p>
-                                        <div className="grid grid-cols-3 gap-2 text-center text-xs">
-                                            <div className={`p-1.5 rounded ${npkStatus.n.color.replace('text-', 'bg-').replace('-600', '-100')}`}> <p className="font-semibold text-gray-900">N</p> <p className={npkStatus.n.color}>{npkStatus.n.status}</p> </div>
-                                            <div className={`p-1.5 rounded ${npkStatus.p.color.replace('text-', 'bg-').replace('-600', '-100')}`}> <p className="font-semibold text-gray-900">P</p> <p className={npkStatus.p.color}>{npkStatus.p.status}</p> </div>
-                                            <div className={`p-1.5 rounded ${npkStatus.k.color.replace('text-', 'bg-').replace('-600', '-100')}`}> <p className="font-semibold text-gray-900">K</p> <p className={npkStatus.k.color}>{npkStatus.k.status}</p> </div>
+                                         <div className="grid grid-cols-3 gap-2 text-center text-xs">
+                                          <div className={`p-1.5 rounded ${npkStatus.n.color.replace('text-', 'bg-').replace('-600', '-100').replace('-700', '-100').replace('-500', '-50')}`}> <p className="font-semibold text-gray-900">N</p> <p className={npkStatus.n.color}>{npkStatus.n.status}</p> </div>
+                                          <div className={`p-1.5 rounded ${npkStatus.p.color.replace('text-', 'bg-').replace('-600', '-100').replace('-700', '-100').replace('-500', '-50')}`}> <p className="font-semibold text-gray-900">P</p> <p className={npkStatus.p.color}>{npkStatus.p.status}</p> </div>
+                                          <div className={`p-1.5 rounded ${npkStatus.k.color.replace('text-', 'bg-').replace('-600', '-100').replace('-700', '-100').replace('-500', '-50')}`}> <p className="font-semibold text-gray-900">K</p> <p className={npkStatus.k.color}>{npkStatus.k.status}</p> </div>
                                         </div>
                                     </div>
                                     <div className="mt-3">
@@ -915,7 +1017,7 @@ export default function PlantDetailPage() {
                                                         ))}
                                                     </ul>
                                                 </div>
-                                            ) : (<p className="text-sm text-orange-600 mt-1 flex items-center"><AlertCircle size={16} className="mr-1"/>Nutrient deficiency detected, but no suitable fertilizer found in inventory or recommendations could not be generated.</p>)
+                                            ) : (<p className="text-sm text-orange-600 mt-1 flex items-center"><AlertCircle size={16} className="mr-1"/>Nutrient deficiency detected, but no suitable fertilizer found or recommendations could not be generated.</p>)
                                         ) : (npkStatus.n.status === 'Optimal' && npkStatus.p.status === 'Optimal' && npkStatus.k.status === 'Optimal') ? (
                                             <p className="text-sm text-green-700 mt-1 flex items-center"><Check size={16} className="mr-1"/>NPK levels appear optimal.</p>
                                         ) : (npkStatus.n.status === 'High' || npkStatus.p.status === 'High' || npkStatus.k.status === 'High') ? (
@@ -928,89 +1030,87 @@ export default function PlantDetailPage() {
                         </div>
                     </div>
                   )}
-                  {activeDetailTab === 'Events' && (
+                  {activeDetailTab === 'Events' && ( 
                     <div>
-                      <h2 className="text-lg font-semibold text-gray-700 mb-3 flex items-center"> <History size={18} className="mr-2" /> Plant Event History </h2>
-                      {isPlantEventsLoading ? ( <div className="text-center py-6"><Loader2 className="h-6 w-6 animate-spin inline-block text-gray-500"/></div> )
-                      : plantEventsError ? ( <p className="text-red-600 text-sm">{plantEventsError}</p> )
-                      : plantEvents.length > 0 ? ( <div className="max-h-96 overflow-y-auto"> <ul className="divide-y divide-gray-200">{plantEvents.map(event => ( <li key={event.id} className="p-3 hover:bg-gray-50"> <p className="font-medium text-gray-800 text-sm mb-1">{event.message}</p> <div className="flex items-center text-xs text-gray-500 space-x-2"> <Clock size={12} /> <span>{formatDate(event.timestamp)}</span> <span className="font-semibold">({event.type})</span> {event.status && <span className={`px-1.5 py-0.5 rounded-full text-xs ${event.status === 'pending' ? 'bg-yellow-100 text-yellow-800' : 'bg-blue-100 text-blue-800'}`}>{event.status}</span>} </div> </li> ))}</ul> </div> )
-                      : ( <p className="text-sm text-gray-500 text-center py-6">No event history found for this plant.</p> )}
+                        <h2 className="text-lg font-semibold text-gray-700 mb-3 flex items-center"> <History size={18} className="mr-2" /> Plant Event History </h2>
+                        {isPlantEventsLoading ? ( <div className="text-center py-6"><Loader2 className="h-6 w-6 animate-spin inline-block text-gray-500"/></div> )
+                        : plantEventsError ? ( <p className="text-red-600 text-sm">{plantEventsError}</p> )
+                        : plantEvents.length > 0 ? ( <div className="max-h-96 overflow-y-auto scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-gray-100"> <ul className="divide-y divide-gray-200">{plantEvents.map(event => ( <li key={event.id} className="p-3 hover:bg-gray-50"> <p className="font-medium text-gray-800 text-sm mb-1">{event.message}</p> <div className="flex items-center text-xs text-gray-500 space-x-2"> <Clock size={12} /> <span>{formatDate(event.timestamp)}</span> <span className="font-semibold">({event.type})</span> {event.status && <span className={`px-1.5 py-0.5 rounded-full text-xs ${event.status === 'pending' ? 'bg-yellow-100 text-yellow-800' : 'bg-blue-100 text-blue-800'}`}>{event.status}</span>} </div> </li> ))}</ul> </div> )
+                        : ( <p className="text-sm text-gray-500 text-center py-6">No event history found for this plant.</p> )}
                     </div>
                   )}
-                  {activeDetailTab === 'Costs' && (
+                  {activeDetailTab === 'Costs' && ( 
                     <div>
-                      <h2 className="text-lg font-semibold text-gray-700 mb-3 flex items-center"> <DollarSign size={18} className="mr-2" /> Cost & Usage Log </h2>
-                      {isCostLoading ? ( <div className="text-center py-6"><Loader2 className="h-6 w-6 animate-spin inline-block text-gray-500"/></div> )
-                      : costError ? ( <p className="text-red-600 text-sm">{costError}</p> )
-                      : costLogs.length > 0 ? (
-                        <div className="overflow-x-auto max-h-96">
-                          <table className="min-w-full divide-y divide-gray-200 text-sm">
-                            <thead className="bg-gray-50 sticky top-0 z-10">
-                              <tr>
-                                <th className="px-3 py-2 text-left font-medium text-gray-500 uppercase tracking-wider">Date</th>
-                                <th className="px-3 py-2 text-left font-medium text-gray-500 uppercase tracking-wider">Type</th>
-                                <th className="px-3 py-2 text-left font-medium text-gray-500 uppercase tracking-wider">Item</th>
-                                <th className="px-3 py-2 text-right font-medium text-gray-500 uppercase tracking-wider">Qty</th>
-                                <th className="px-3 py-2 text-right font-medium text-gray-500 uppercase tracking-wider">Cost/Value</th>
-                              </tr>
-                            </thead>
-                            <tbody className="bg-white divide-y divide-gray-200">
-                              {costLogs.map(log => {
-                                const { Icon, color } = getLogTypeStyle(log.type);
-                                const isCost = ['Seed Planted', 'Fertilizer Used', 'Material Used', 'Purchase'].includes(log.type);
-                                return (
-                                  <tr key={log.id} className="hover:bg-gray-50">
-                                    <td className="px-3 py-2 whitespace-nowrap text-gray-600">{formatDate(log.timestamp)}</td>
-                                    <td className="px-3 py-2 whitespace-nowrap"><span className={`inline-flex items-center text-xs font-medium ${color}`}><Icon size={14} className="mr-1.5" />{log.type}</span></td>
-                                    <td className="px-3 py-2 whitespace-nowrap text-gray-800">{log.itemName}</td>
-                                    <td className={`px-3 py-2 whitespace-nowrap text-right ${log.quantityChange > 0 && log.type !== 'Sale' ? 'text-green-600' : 'text-red-600'}`}>{log.quantityChange > 0 && log.type !== 'Sale' ? '+' : ''}{log.quantityChange}{log.unit ? ` ${log.unit}` : ''}</td>
-                                    <td className={`px-3 py-2 whitespace-nowrap text-right font-medium ${isCost ? 'text-red-600' : 'text-green-600'}`}>{formatCurrency(log.totalCostOrValue)}</td>
-                                  </tr>
-                                );
-                              })}
-                            </tbody>
-                          </table>
-                        </div>
-                      ) : ( <p className="text-sm text-gray-500 text-center py-6">No cost or usage logs found for this plant.</p> )}
+                        <h2 className="text-lg font-semibold text-gray-700 mb-3 flex items-center"> <DollarSign size={18} className="mr-2" /> Cost & Usage Log </h2>
+                        {isCostLoading ? ( <div className="text-center py-6"><Loader2 className="h-6 w-6 animate-spin inline-block text-gray-500"/></div> )
+                        : costError ? ( <p className="text-red-600 text-sm">{costError}</p> )
+                        : costLogs.length > 0 ? (
+                            <div className="overflow-x-auto max-h-96 scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-gray-100">
+                                <table className="min-w-full divide-y divide-gray-200 text-sm">
+                                    <thead className="bg-gray-50 sticky top-0 z-10"><tr>
+                                        <th className="px-3 py-2 text-left font-medium text-gray-500 uppercase tracking-wider">Date</th>
+                                        <th className="px-3 py-2 text-left font-medium text-gray-500 uppercase tracking-wider">Type</th>
+                                        <th className="px-3 py-2 text-left font-medium text-gray-500 uppercase tracking-wider">Item</th>
+                                        <th className="px-3 py-2 text-right font-medium text-gray-500 uppercase tracking-wider">Qty</th>
+                                        <th className="px-3 py-2 text-right font-medium text-gray-500 uppercase tracking-wider">Cost/Value</th>
+                                    </tr></thead>
+                                    <tbody className="bg-white divide-y divide-gray-200">
+                                    {costLogs.map(log => {
+                                        const { Icon, color } = getLogTypeStyle(log.type);
+                                        const isCostType = ['Seed Planted', 'Fertilizer Used', 'Material Used', 'Purchase', 'Initial Stock'].includes(log.type);
+                                        const displayQuantity = Math.abs(log.quantityChange);
+                                        const quantityPrefix = log.quantityChange > 0 && log.type !== 'Sale' ? '+' : log.quantityChange < 0 ? '-' : '';
+                                        const quantityColor = (log.quantityChange < 0 || log.type === 'Sale') ? 'text-red-600' : 'text-green-600';
+                                        return (
+                                        <tr key={log.id} className="hover:bg-gray-50">
+                                            <td className="px-3 py-2 whitespace-nowrap text-gray-600">{formatDate(log.timestamp)}</td>
+                                            <td className="px-3 py-2 whitespace-nowrap"><span className={`inline-flex items-center text-xs font-medium ${color}`}><Icon size={14} className="mr-1.5" />{log.type}</span></td>
+                                            <td className="px-3 py-2 whitespace-nowrap text-gray-800">{log.itemName}</td>
+                                            <td className={`px-3 py-2 whitespace-nowrap text-right ${quantityColor}`}>{quantityPrefix}{displayQuantity}{log.unit ? ` ${log.unit}` : ''}</td>
+                                            <td className={`px-3 py-2 whitespace-nowrap text-right font-medium ${isCostType && log.type !== 'Sale' ? 'text-red-600' : 'text-green-600'}`}>{formatCurrency(log.totalCostOrValue)}</td>
+                                        </tr>);
+                                    })}
+                                    </tbody>
+                                </table>
+                            </div>
+                        ) : ( <p className="text-sm text-gray-500 text-center py-6">No cost or usage logs found for this plant.</p> )}
                     </div>
                   )}
-                  {activeDetailTab === 'Sensors' && (
+                  {activeDetailTab === 'Sensors' && ( 
                     <div>
-                      <h2 className="text-lg font-semibold text-gray-700 mb-3 flex items-center"> <Activity size={18} className="mr-2" /> Full Sensor History </h2>
-                      {isSensorHistoryLoading ? ( <div className="text-center py-6"><Loader2 className="h-6 w-6 animate-spin inline-block text-gray-500"/></div> )
-                      : sensorHistoryError ? ( <p className="text-red-600 text-sm">{sensorHistoryError}</p> )
-                      : sensorHistory.length > 0 ? (
-                        <div className="overflow-x-auto max-h-96">
-                          <table className="min-w-full divide-y divide-gray-200 text-sm">
-                            <thead className="bg-gray-50 sticky top-0 z-10">
-                              <tr>
-                                <th className="px-3 py-2 text-left font-medium text-gray-500 uppercase tracking-wider">Timestamp</th>
-                                <th className="px-3 py-2 text-right font-medium text-gray-500 uppercase tracking-wider">Temp (°C)</th>
-                                <th className="px-3 py-2 text-right font-medium text-gray-500 uppercase tracking-wider">Humid (%)</th>
-                                <th className="px-3 py-2 text-right font-medium text-gray-500 uppercase tracking-wider">pH</th>
-                                <th className="px-3 py-2 text-right font-medium text-gray-500 uppercase tracking-wider">EC (mS/cm)</th>
-                                <th className="px-3 py-2 text-right font-medium text-gray-500 uppercase tracking-wider">N (ppm)</th>
-                                <th className="px-3 py-2 text-right font-medium text-gray-500 uppercase tracking-wider">P (ppm)</th>
-                                <th className="px-3 py-2 text-right font-medium text-gray-500 uppercase tracking-wider">K (ppm)</th>
-                              </tr>
-                            </thead>
-                            <tbody className="bg-white divide-y divide-gray-200">
-                              {sensorHistory.map(reading => (
-                                <tr key={reading.id} className="hover:bg-gray-50">
-                                  <td className="px-3 py-2 whitespace-nowrap text-gray-600">{formatDate(reading.timestamp)}</td>
-                                  <td className="px-3 py-2 whitespace-nowrap text-gray-800 text-right">{reading.temperature?.toFixed(1) ?? '-'}</td>
-                                  <td className="px-3 py-2 whitespace-nowrap text-gray-800 text-right">{reading.humidity?.toFixed(0) ?? '-'}</td>
-                                  <td className="px-3 py-2 whitespace-nowrap text-gray-800 text-right">{reading.ph?.toFixed(1) ?? '-'}</td>
-                                  <td className="px-3 py-2 whitespace-nowrap text-gray-800 text-right">{reading.ec?.toFixed(1) ?? '-'}</td>
-                                  <td className="px-3 py-2 whitespace-nowrap text-gray-800 text-right">{reading.nitrogen?.toFixed(0) ?? '-'}</td>
-                                  <td className="px-3 py-2 whitespace-nowrap text-gray-800 text-right">{reading.phosphorus?.toFixed(0) ?? '-'}</td>
-                                  <td className="px-3 py-2 whitespace-nowrap text-gray-800 text-right">{reading.potassium?.toFixed(0) ?? '-'}</td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      ) : ( <p className="text-sm text-gray-500 text-center py-6">No historical sensor readings found for this plant.</p> )}
+                        <h2 className="text-lg font-semibold text-gray-700 mb-3 flex items-center"> <Activity size={18} className="mr-2" /> Full Sensor History </h2>
+                        {isSensorHistoryLoading ? ( <div className="text-center py-6"><Loader2 className="h-6 w-6 animate-spin inline-block text-gray-500"/></div> )
+                        : sensorHistoryError ? ( <p className="text-red-600 text-sm">{sensorHistoryError}</p> )
+                        : sensorHistory.length > 0 ? (
+                            <div className="overflow-x-auto max-h-96 scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-gray-100">
+                                <table className="min-w-full divide-y divide-gray-200 text-sm">
+                                    <thead className="bg-gray-50 sticky top-0 z-10"><tr>
+                                        <th className="px-3 py-2 text-left font-medium text-gray-500 uppercase tracking-wider">Timestamp</th>
+                                        <th className="px-3 py-2 text-right font-medium text-gray-500 uppercase tracking-wider">Temp (°C)</th>
+                                        <th className="px-3 py-2 text-right font-medium text-gray-500 uppercase tracking-wider">Humid (%)</th>
+                                        <th className="px-3 py-2 text-right font-medium text-gray-500 uppercase tracking-wider">pH</th>
+                                        <th className="px-3 py-2 text-right font-medium text-gray-500 uppercase tracking-wider">EC (mS/cm)</th>
+                                        <th className="px-3 py-2 text-right font-medium text-gray-500 uppercase tracking-wider">N (ppm)</th>
+                                        <th className="px-3 py-2 text-right font-medium text-gray-500 uppercase tracking-wider">P (ppm)</th>
+                                        <th className="px-3 py-2 text-right font-medium text-gray-500 uppercase tracking-wider">K (ppm)</th>
+                                    </tr></thead>
+                                    <tbody className="bg-white divide-y divide-gray-200">
+                                    {sensorHistory.map(reading => (
+                                        <tr key={reading.id} className="hover:bg-gray-50">
+                                            <td className="px-3 py-2 whitespace-nowrap text-gray-600">{formatDate(reading.timestamp)}</td>
+                                            <td className="px-3 py-2 whitespace-nowrap text-gray-800 text-right">{reading.temperature?.toFixed(1) ?? '-'}</td>
+                                            <td className="px-3 py-2 whitespace-nowrap text-gray-800 text-right">{reading.humidity?.toFixed(0) ?? '-'}</td>
+                                            <td className="px-3 py-2 whitespace-nowrap text-gray-800 text-right">{reading.ph?.toFixed(1) ?? '-'}</td>
+                                            <td className="px-3 py-2 whitespace-nowrap text-gray-800 text-right">{reading.ec?.toFixed(1) ?? '-'}</td>
+                                            <td className="px-3 py-2 whitespace-nowrap text-gray-800 text-right">{reading.nitrogen?.toFixed(0) ?? '-'}</td>
+                                            <td className="px-3 py-2 whitespace-nowrap text-gray-800 text-right">{reading.phosphorus?.toFixed(0) ?? '-'}</td>
+                                            <td className="px-3 py-2 whitespace-nowrap text-gray-800 text-right">{reading.potassium?.toFixed(0) ?? '-'}</td>
+                                        </tr>
+                                    ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        ) : ( <p className="text-sm text-gray-500 text-center py-6">No historical sensor readings found for this plant.</p> )}
                     </div>
                   )}
                 </div>
@@ -1021,12 +1121,16 @@ export default function PlantDetailPage() {
           {plantDetails && (
             <button
                 onClick={() => setIsAddSensorModalOpen(true)}
-                className="fixed bottom-8 right-8 z-30 bg-green-600 text-white p-4 rounded-full shadow-lg hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 transition ease-in-out duration-150 hover:scale-110 active:scale-100"
-                aria-label="Add Sensor Reading"
-                title="Add New Sensor Reading"
-            >
-                <Plus size={24} />
-            </button>
+                className="fixed bottom-8 right-8 z-30 bg-blue-600 text-white p-4 rounded-full shadow-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition ease-in-out duration-150 hover:scale-110 active:scale-100"
+                aria-label="Add Sensor Reading" title="Add New Sensor Reading"
+            > <Activity size={24} /> </button>
+          )}
+          {plantDetails && activeDetailTab === 'Costs' && (
+            <button
+                onClick={() => setIsSelectItemModalOpen(true)} // This opens the SelectItemForUsageModal
+                className="fixed bottom-24 right-8 z-30 bg-orange-500 text-white p-4 rounded-full shadow-lg hover:bg-orange-600 focus:outline-none focus:ring-2 focus:ring-orange-400 focus:ring-offset-2 transition ease-in-out duration-150 hover:scale-110 active:scale-100"
+                aria-label="Log Item Usage for this Plant" title="Log Item Usage for this Plant"
+            > <UseIcon size={24} /> </button>
           )}
         </main>
       </div>
@@ -1039,6 +1143,71 @@ export default function PlantDetailPage() {
             plantName={plantDetails.name}
         />
       )}
+      {/* SelectItemForUsageModal is now the primary modal for logging usage */}
+      {isSelectItemModalOpen && plantDetails && (
+        <SelectItemForUsageModal 
+            isOpen={isSelectItemModalOpen}
+            onClose={() => {
+                setIsSelectItemModalOpen(false);
+                // Optionally re-fetch data after usage is logged
+                // This ensures the costLogs and inventory stock are updated on the PlantDetailPage
+                if (user && firestore && plantId) {
+                  const fetchCostLogs = async () => {
+                    setIsCostLoading(true); setCostError(null);
+                    try {
+                      const logCollectionRef = collection(firestore, 'inventory_log');
+                      const q = query( logCollectionRef, where("plantId", "==", plantId), where("userId", "==", user.uid), orderBy("timestamp", "desc") );
+                      const querySnapshot = await getDocs(q); const fetchedLogs: InventoryLogEntry[] = [];
+                      querySnapshot.forEach((docSnap) => { 
+                        const data = docSnap.data();
+                        fetchedLogs.push({ 
+                            id: docSnap.id, 
+                            itemId: data.itemId || 'N/A', 
+                            itemName: data.itemName || 'N/A', 
+                            timestamp: (data.timestamp as Timestamp).toDate(), 
+                            type: data.type as InventoryLogEntry['type'], 
+                            quantityChange: data.quantityChange, 
+                            costOrValuePerUnit: data.costOrValuePerUnit, 
+                            totalCostOrValue: data.totalCostOrValue, 
+                            unit: data.unit, 
+                            userId: data.userId, 
+                            plantId: data.plantId, 
+                            notes: data.notes 
+                        }); 
+                      });
+                      setCostLogs(fetchedLogs);
+                    } catch (err:any) { setCostError(err.message); } finally { setIsCostLoading(false); }
+                  };
+                  fetchCostLogs();
+
+                  const fetchAllInventory = async () => {
+                    setIsInventoryLoading(true); setInventoryError(null);
+                    try {
+                      const inventoryRef = collection(firestore, 'inventory');
+                      const qInv = query(inventoryRef, where("stock", ">", 0));
+                      const invSnapshot = await getDocs(qInv); const fetchedInv: InventoryItem[] = [];
+                      invSnapshot.forEach((docSnap) => { fetchedInv.push({ id: docSnap.id, ...docSnap.data() } as InventoryItem); });
+                      setAllInventoryItems(fetchedInv.sort((a, b) => a.name.localeCompare(b.name)));
+                    } catch (err:any) { setInventoryError(err.message); } finally { setIsInventoryLoading(false); }
+                  };
+                  fetchAllInventory();
+                }
+            }}
+            currentPlantId={plantDetails.id}
+            currentPlantName={plantDetails.name}
+        />
+      )}
+      {/* UseItemModal might be deprecated if SelectItemForUsageModal handles the full flow.
+        If it's still used for a different purpose, its invocation would be here.
+      */}
+      {/* {isUseItemForCostModalOpen && itemToUseForCost && plantDetails && (
+        <UseItemModal
+            isOpen={isUseItemForCostModalOpen}
+            onClose={() => { setIsUseItemForCostModalOpen(false); setItemToUseForCost(null); }}
+            item={itemToUseForCost}
+            onSubmit={(selectedItem, quantity, notes) => handleUseItemForCostSubmit(selectedItem as InventoryItem, quantity, notes)}
+        />
+      )} */}
     </div>
   );
 }

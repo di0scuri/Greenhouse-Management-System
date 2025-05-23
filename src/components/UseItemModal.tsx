@@ -127,7 +127,7 @@ const UseItemModal: React.FC<UseItemModalProps> = ({
           </div>
 
           <div>
-            <label htmlFor="linkPlant" className="block text-sm font-medium text-gray-700 mb-1">Link to Plant (Optional)</label>
+            <label htmlFor="linkPlant" className="block text-sm font-medium text-gray-700 mb-1">Link to Plant</label>
             <select
               id="linkPlant"
               value={linkedPlantId}
@@ -145,7 +145,7 @@ const UseItemModal: React.FC<UseItemModalProps> = ({
 
           <div>
             <label htmlFor="notes" className="block text-sm font-medium text-gray-700 mb-1">
-              Notes (Optional)
+              Notes
             </label>
             <textarea
               id="notes"

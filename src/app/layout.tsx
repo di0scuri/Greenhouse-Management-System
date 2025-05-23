@@ -16,7 +16,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   
-  title: "Agri-Track",
+  title: "AgriTrack",
   description: "Greenhouse Management System",
 };
 
